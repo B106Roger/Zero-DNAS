@@ -1,0 +1,1 @@
+python tools/train.py --cfg experiments/configs/train/train.yaml --data ivslab.yaml --hyp hyp.scratch.yaml --device 6,7

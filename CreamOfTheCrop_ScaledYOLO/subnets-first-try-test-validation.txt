@@ -1,0 +1,30 @@
+map: 0.173057644338254
+cn_k3_s2->bottle->cn_k3_s2->bottlecsp_num4_gamma0.25->cn_k3_s2->bottlecsp_num4_gamma0.25->cn_k3_s2->bottlecsp_num2_gamma0.25->cn_k3_s2->bottlecsp_num8_gamma0.25->sppcsp->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp2_num2_gamma0.25->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp_num8_gamma0.5->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num8_gamma0.25->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num4_gamma0.25->cn_k3_s1
+
+map: 0.16836699671750846
+cn_k3_s2->bottle->cn_k3_s2->bottlecsp_num8_gamma0.5->cn_k3_s2->bottlecsp_num4_gamma0.5->cn_k3_s2->bottlecsp_num2_gamma0.25->cn_k3_s2->bottlecsp_num8_gamma0.5->sppcsp->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp2_num8_gamma0.25->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp_num2_gamma0.5->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num4_gamma0.25->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num4_gamma0.5->cn_k3_s1
+
+map: 0.14379030426122416
+cn_k3_s2->bottle->cn_k3_s2->bottlecsp_num2_gamma0.5->cn_k3_s2->bottlecsp_num4_gamma0.25->cn_k3_s2->bottlecsp_num4_gamma0.5->cn_k3_s2->bottlecsp_num2_gamma0.5->sppcsp->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp2_num2_gamma0.5->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp_num4_gamma0.5->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num2_gamma0.25->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num2_gamma0.5->cn_k3_s1
+
+map: 0.12666863031863
+cn_k3_s2->bottle->cn_k3_s2->bottlecsp_num8_gamma0.25->cn_k3_s2->bottlecsp_num2_gamma0.25->cn_k3_s2->bottlecsp_num8_gamma0.5->cn_k3_s2->bottlecsp_num8_gamma0.25->sppcsp->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp2_num8_gamma0.5->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp_num4_gamma0.5->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num2_gamma0.25->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num2_gamma0.25->cn_k3_s1
+
+map: 0.1247033711685191
+cn_k3_s2->bottle->cn_k3_s2->bottlecsp_num2_gamma0.5->cn_k3_s2->bottlecsp_num2_gamma0.25->cn_k3_s2->bottlecsp_num4_gamma0.25->cn_k3_s2->bottlecsp_num4_gamma0.25->sppcsp->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp2_num4_gamma0.5->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp_num8_gamma0.25->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num4_gamma0.5->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num2_gamma0.5->cn_k3_s1
+
+map: 0.12374235390993489
+cn_k3_s2->bottle->cn_k3_s2->bottlecsp_num8_gamma0.5->cn_k3_s2->bottlecsp_num4_gamma0.25->cn_k3_s2->bottlecsp_num2_gamma0.5->cn_k3_s2->bottlecsp_num4_gamma0.5->sppcsp->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp2_num2_gamma0.25->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp_num8_gamma0.5->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num8_gamma0.25->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num8_gamma0.25->cn_k3_s1
+
+map: 0.123303536064451
+cn_k3_s2->bottle->cn_k3_s2->bottlecsp_num4_gamma0.25->cn_k3_s2->bottlecsp_num2_gamma0.5->cn_k3_s2->bottlecsp_num4_gamma0.25->cn_k3_s2->bottlecsp_num2_gamma0.5->sppcsp->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp2_num4_gamma0.5->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp_num2_gamma0.25->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num8_gamma0.5->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num8_gamma0.25->cn_k3_s1
+
+map: 0.11876085605558889
+cn_k3_s2->bottle->cn_k3_s2->bottlecsp_num4_gamma0.25->cn_k3_s2->bottlecsp_num2_gamma0.25->cn_k3_s2->bottlecsp_num4_gamma0.25->cn_k3_s2->bottlecsp_num2_gamma0.5->sppcsp->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp2_num4_gamma0.25->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp_num2_gamma0.5->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num4_gamma0.5->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num2_gamma0.5->cn_k3_s1
+
+map: 0.11646047441777603
+cn_k3_s2->bottle->cn_k3_s2->bottlecsp_num8_gamma0.25->cn_k3_s2->bottlecsp_num8_gamma0.5->cn_k3_s2->bottlecsp_num2_gamma0.25->cn_k3_s2->bottlecsp_num2_gamma0.25->sppcsp->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp2_num8_gamma0.5->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp_num2_gamma0.25->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num2_gamma0.25->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num8_gamma0.5->cn_k3_s1
+
+map: 0.11494588286127072
+cn_k3_s2->bottle->cn_k3_s2->bottlecsp_num4_gamma0.25->cn_k3_s2->bottlecsp_num2_gamma0.25->cn_k3_s2->bottlecsp_num2_gamma0.25->cn_k3_s2->bottlecsp_num8_gamma0.25->sppcsp->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp2_num4_gamma0.25->cn_k1_s1->up_None_nearest->cn_k1_s1->concat->bottlecsp_num8_gamma0.25->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num4_gamma0.25->cn_k3_s1->cn_k3_s2->concat->bottlecsp2_num4_gamma0.25->cn_k3_s1
+

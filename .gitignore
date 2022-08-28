@@ -1,0 +1,13 @@
+CreamOfTehCrop_ScaledYOLO/data/obj-st
+CreamOfTehCrop_ScaledYOLO/data/VOC2007
+CreamOfTehCrop_ScaledYOLO/experiments/workspace
+CreamOfTehCrop_ScaledYOLO/experiment_results
+
+CreamOfTehCrop_YOLOv5/data/obj-st
+CreamOfTehCrop_YOLOv5/data/VOC2007
+CreamOfTehCrop_YOLOv5/experiments/workspace
+CreamOfTehCrop_YOLOv5/experiment_results
+
+mish-cuda
+ScaledYOLOv4
+yolov5

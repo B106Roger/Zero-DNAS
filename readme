@@ -1,0 +1,21 @@
+# File Structure
+----
+CreamOfTheCrop_ScaledYOLO
+    data
+        obj-st  (Link)
+        VOC2007 (Link) 
+CreamOfTheCrop_YOLOv5
+    data
+        obj-st  (Link)
+        VOC2007 (Link) 
+ScaledYOLOv4
+    data
+        coco    (Link)
+        obj-st  (Link)
+        VOC2007 (Link) 
+
+yolov5
+    data (Link)
+    venv (x)
+# Detail
+----

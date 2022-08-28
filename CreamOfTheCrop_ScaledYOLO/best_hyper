@@ -1,0 +1,30 @@
+lpha = 0.03
+beta = 0.01
+gamma = 0.01
+omega = 0.01
+# training_loss, loss_items = compute_loss(output, target, model)
+output_flops = output_flops / 1000
+flops_loss = torch.log(output_flops ** beta)
+params_loss = torch.log(output_params ** alpha)
+
+squared_error_flops = (output_flops - task_flops) ** 2
+squared_error_params = (output_params - task_params) ** 2
+
+flops_loss = squared_error_flops * alpha
+params_loss = squared_error_params * beta
+layers_loss = output_layers * omega
+# wot_loss = 1/torch.log(output_wot ** gamma)
+wot_loss = -(output_wot * gamma)
+# synflow_loss = 1/torch.log(output_synflow ** gamma)
+# print('flops_loss', flops_loss)
+# print('params_loss', params_loss)
+# print('synflow loss', synflow_loss)
+# exit()
+# loss = synflow_loss * flops_loss
+# loss = synflow_loss + flops_loss + params_loss
+# loss = flops_loss
+# loss = wot_loss + flops_loss + params_loss
+loss = wot_loss + flops_loss + params_loss + layers_loss
+# print(loss)
+
+return loss, flops_loss, params_loss, wot_loss, layers_loss
