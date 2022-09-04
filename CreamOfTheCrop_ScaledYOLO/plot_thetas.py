@@ -4,11 +4,13 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 import matplotlib
-
 matplotlib.rc('font', size=15)
-experiment_name = 'thetas-tiny-wot-precalculated-flops5-params32-layers-it2880-temp3-dec0.065'
-thetas_path = Path(f'{experiment_name}.txt')
-experiment_graphs = Path('experiment_results/thetas')
+
+
+experiment_name = 'VOC-NAS-L' #'VOC-NAS-SS-03'
+experiment_path = Path(f'experiments/workspace/train/{experiment_name}/')
+thetas_path = experiment_path / 'thetas.txt'
+experiment_graphs = Path('.')
 
 thetas_string = []
 with open(thetas_path, 'r') as file:
@@ -37,4 +39,4 @@ for idx in range(len(last_thetas) // 2):
         overall_plots += 1
 fig.set_size_inches(15.5, 13.5)
 fig.tight_layout()
-fig.savefig(experiment_graphs / f'{experiment_name}.png')
+fig.savefig(experiment_path / 'thetas.png')

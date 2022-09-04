@@ -1,4 +1,7 @@
-# File Structure
+# Zero-DNAS
+## ENV
+- yolo-csp-new
+## File Structure
 ----
 CreamOfTheCrop_ScaledYOLO
     data
@@ -18,4 +21,13 @@ yolov5
     data (Link)
     venv (x)
 # Detail
+- Search
+-   search would conduct on 288 resolution, because we can't fit 416 resolution when using large search space
+-       but flops calculation are conduct in 416 resolution
+- Train
+-   train would conduct on 416 resolution.
 ----
+## Search Command
+python tools/train.py --cfg experiments/configs/train/train.yaml --data voc.yaml --hyp hyp.scratch.yaml --device 1,2 --exp_name VOC-NAS-SS
+## Training Command
+python ./train.py --data ./data/voc.yaml --hyp ./data/hyp.finetune.yaml --cfg ./models/yolov5m.yaml --batch-size 16 --weights '' --device 1,2 --img-size 416

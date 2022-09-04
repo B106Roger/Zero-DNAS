@@ -3,7 +3,7 @@
 # Written by Hao Du and Houwen Peng
 # email: haodu8-c@my.cityu.edu.hk and houwen.peng@microsoft.com
 
-import time
+import time, os
 import torchvision
 import torch.nn.functional as F
 import itertools
@@ -14,8 +14,8 @@ from lib.utils.general import compute_loss
 from lib.utils.kd_utils import compute_loss_KD
 from lib.utils.synflow import sum_arr_tensor
 
-TASK_FLOPS = 5          # e.g TASK_FLOPS = 5   means 50 GFLOPs
-TASK_PARAMS = 32        # e.g TASK_PARAMS = 32 means 32 million parameters.
+TASK_FLOPS = 11.9 #11.9          # e.g TASK_FLOPS = 5   means 50 GFLOPs
+TASK_PARAMS = 52.5  # 52.5        # e.g TASK_PARAMS = 32 means 32 million parameters.
 # supernet train function
 def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, MetaMN, cfg, device, synflow_cache, theta_optimizer=None,
                 est=None, logger=None, lr_scheduler=None, saver=None,
@@ -62,7 +62,7 @@ def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, Met
         # Finetuning part
         model.module.update_main()
         task_flops, task_params = (TASK_FLOPS, TASK_PARAMS)
-        training_loss, flops_loss, params_loss, wot_loss, layer_loss = training_step(task_flops, task_params, device, model, random_cand, est, wot_map)
+        training_loss, flops_loss, params_loss, wot_loss, layer_loss = training_step(task_flops, task_params, device, model, random_cand, est, wot_map, cfg)
         theta_optimizer.zero_grad()
         training_loss.backward()
         theta_optimizer.step()
@@ -131,7 +131,7 @@ def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, Met
         prec1_m.update(map50, batch_size)
         batch_time_m.update(time.time() - end)
 
-        if iteration % 30 == 0:
+        if iteration % (iterations // 2 -1) == 0:
             distributions = softmax(model.module.thetas[0]().detach().cpu().numpy())
             print('Distributions in 1 stage:', distributions)
             
@@ -199,7 +199,8 @@ def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, Met
 
 
 
-def training_step(task_flops, task_params, device, model, random_cand, est, wot_map):
+def training_step(task_flops, task_params, device, model, random_cand, est, wot_map, cfg):
+    output_dir = os.path.join(cfg.SAVE_PATH, cfg.exp_name)
     GPU_NUMBER = 2
     model.module.zero_grad()
     overall_flops = torch.zeros((GPU_NUMBER, 1)).to(device)
@@ -207,7 +208,7 @@ def training_step(task_flops, task_params, device, model, random_cand, est, wot_
     overall_params = torch.zeros((GPU_NUMBER, 1)).to(device)
     overall_wot = torch.zeros((GPU_NUMBER, 1)).to(device)
     overall_layers = torch.zeros((GPU_NUMBER, 1)).to(device)
-    one_datasample = torch.ones(1, 3, 416, 416).to(device)
+    # one_datasample = torch.ones(1, 3, 416, 416).to(device)
     
 
     #############################################
@@ -228,10 +229,10 @@ def training_step(task_flops, task_params, device, model, random_cand, est, wot_
     output_layers = output_layers.mean()
     # output_synflow = output_synflow.mean()
     output_params = output_params.mean()
-    with open(f'flops-{TASK_FLOPS}-wot-precalculated-it2880-temp2.5.txt', 'a') as flops_file:
+    with open(os.path.join(output_dir, f'flops-{TASK_FLOPS}-wot-precalculated-it2880.txt'), 'a') as flops_file:
         flops_file.write(str(output_flops.item()))
         flops_file.write('\n')
-    with open(f'params-{TASK_PARAMS}-wot-precalculatedit2880-temp2.5.txt', 'a') as params_file:
+    with open(os.path.join(output_dir, f'params-{TASK_PARAMS}-wot-precalculatedit2880.txt'), 'a') as params_file:
         params_file.write(str(output_params.item()))
         params_file.write('\n')
     
@@ -239,7 +240,7 @@ def training_step(task_flops, task_params, device, model, random_cand, est, wot_
     beta = 0.01
     gamma = 0.01
     # gamma = 0.001
-    omega = 0.005
+    omega = 0.01
     # training_loss, loss_items = compute_loss(output, target, model)
     output_flops = output_flops / 1000
     flops_loss = torch.log(output_flops ** beta)

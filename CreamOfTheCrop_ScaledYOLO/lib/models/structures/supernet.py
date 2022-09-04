@@ -696,11 +696,10 @@ def calculate_choices(choices):
     return n_choices
 
 def gen_supernet(flops_minimum=0, flops_maximum=600, **kwargs):
-    # choices = {'n_bottlenecks': [8, 4, 2], 'gamma': [0.25, 0.5]}
+    # choices = {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]} # big
     choices = {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}
 
 
-    num_features = 1280
     #1 4 0 0
     # act_layer = HardSwish
     act_layer = nn.ReLU
@@ -769,7 +768,6 @@ def gen_supernet(flops_minimum=0, flops_maximum=600, **kwargs):
     model_kwargs = dict(
         block_args=decode_arch_def(arch_def),
         choices=choices,
-        num_features=num_features,
         stem_size=32,
         norm_kwargs=resolve_bn_args(kwargs),
         act_layer=act_layer,

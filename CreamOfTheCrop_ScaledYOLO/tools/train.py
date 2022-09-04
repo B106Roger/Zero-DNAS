@@ -11,6 +11,7 @@ import torch
 import numpy as np
 import torch.nn as nn
 import tqdm
+import shutil
 
 import _init_paths
 
@@ -47,14 +48,23 @@ from lib.utils.attentive_sampling import collect_samples
 from scipy.special import softmax
 from lib.models.AttentiveNasSampler import ArchSampler
 
-
+def config_backup(backup_path, args):
+    os.makedirs(backup_path, exist_ok=True)
+    shutil.copy(args.cfg,  os.path.join(backup_path, os.path.basename(args.cfg)))
+    shutil.copy(args.hyp,  os.path.join(backup_path, os.path.basename(args.hyp)))
+    shutil.copy(args.data, os.path.join(backup_path, os.path.basename(args.data)))
+    
+    
 
 def main():
     args, cfg = parse_config_args('super net training')
     # resolve logging
-    output_dir = os.path.join(cfg.SAVE_PATH,
-                              "{}-{}".format(datetime.now().strftime('%m%d-%H:%M:%S'),
-                                             cfg.MODEL))
+    # output_dir = os.path.join(cfg.SAVE_PATH,
+    #                           "{}-{}".format(datetime.now().strftime('%m%d-%H:%M:%S'),
+    #                                          cfg.MODEL))
+    output_dir = os.path.join(cfg.SAVE_PATH, cfg.exp_name)
+    output_bakup_dir = os.path.join(output_dir, 'config')
+    config_backup(output_bakup_dir, args)
 
     if args.local_rank == 0:
         if not os.path.isdir(output_dir):
@@ -179,7 +189,7 @@ def main():
     cuda = device.type != 'cpu'
     if cuda and torch.cuda.device_count() > 1:
         model = torch.nn.DataParallel(model)
-        print(f'Using {torch.cuda.device_count()} GPUs')
+        print(f'Using {torch.cuda.device_count()} GPUs. device: {device}')
 
     model = model.to(device)
     
@@ -259,7 +269,7 @@ def main():
         wot_map = model.module.calculate_wot(input, random_cand)
         break
     try:
-        write_thetas(model.module.thetas_main, -1)
+        write_thetas(output_dir, model.module.thetas_main, -1)
         for epoch in range(num_epochs):
             print(f'current epoch: {epoch}')
             train_metrics = train_epoch(epoch, model, dataloader, optimizer,
@@ -276,11 +286,12 @@ def main():
                                         arch_sampler=arch_sampler,
                                         train_theta=True, wot_map=wot_map)
             print('Writing thetas!')                            
-            write_thetas(model.module.thetas_main, epoch)
+            write_thetas(output_dir, model.module.thetas_main, epoch)
             torch.save(model.module.thetas_main, 'thetas_weights/thetas.pt')
             print('Decreasing temperature!')
             model.module.temperature = model.module.temperature * np.exp(-0.065)
             # evaluate one epoch
+        write_final_thetas(output_dir, model.module.thetas_main)
         best_candidate_idx, best_candidate_map = validate(model, testloader, validate_loss_fn,
                                 prioritized_board, cfg, device=device,
                                 local_rank=args.local_rank, logger=logger)
@@ -299,14 +310,29 @@ def main():
         pass
 
 
-def write_thetas(thetas, epoch):
-    distributions = []
+def write_thetas(output_dir, thetas, epoch):
+    alpha_distributions = []
+    beta_distributions = []
     for theta in thetas:
-        distributions.append(softmax(theta().detach().cpu().numpy()))
+        alpha=theta().detach().cpu().numpy()
+        alpha_distributions.append(alpha)
+        beta_distributions.append(softmax(alpha))
 
-    with open('thetas-tiny-wot-precalculated-flops5-params32-layers-it2880-temp3-dec0.065.txt', 'a') as f:
-        f.write(f'epoch: {epoch}\n')
-        f.writelines(str(distributions))
+    with open(os.path.join(output_dir, 'alpha_distribution.txt'), 'a') as f:
+        f.write(f'epoch: {epoch}')
+        f.writelines(str(alpha_distributions)+'\n')
+    with open(os.path.join(output_dir, 'beta_distribution.txt'), 'a') as f:
+        f.write(f'epoch: {epoch}')
+        f.writelines(str(beta_distributions)+'\n')
+
+def write_final_thetas(output_dir, thetas):
+    beta_distributions = []
+    for theta in thetas:
+        alpha=theta().detach().cpu().numpy()
+        beta_distributions.append(softmax(alpha))
+
+    with open(os.path.join(output_dir, 'thetas.txt'), 'w') as f:
+        f.writelines(str(beta_distributions)+'\n')
 
 if __name__ == '__main__':
     main()

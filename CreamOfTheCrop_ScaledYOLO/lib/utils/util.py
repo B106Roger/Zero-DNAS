@@ -230,6 +230,7 @@ def parse_config_args(exp_name):
                         help='configuration of cream')
     parser.add_argument('--local_rank', type=int, default=0,
                         help='local_rank')
+    parser.add_argument('--exp_name', type=str, default='exp', help="name of experiments")
     parser.add_argument('--data', type=str, default='data/coco128.yaml', help='data.yaml path')
     parser.add_argument('--hyp', type=str, default='', help='hyperparameters path, i.e. data/hyp.scratch.yaml')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
@@ -242,6 +243,7 @@ def parse_config_args(exp_name):
     args = parser.parse_args()
 
     cfg.merge_from_file(args.cfg)
+    cfg.exp_name = args.exp_name
     converted_cfg = convert_lowercase(cfg)
 
     return args, converted_cfg

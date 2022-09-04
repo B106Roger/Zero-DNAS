@@ -1,1 +1,1 @@
-python tools/train.py --cfg experiments/configs/train/train.yaml --data ivslab.yaml --hyp hyp.scratch.yaml --device 6,7
+python tools/train.py --cfg experiments/configs/train/train.yaml --data voc.yaml --hyp hyp.scratch.yaml --device 6,7 --exp_name test
