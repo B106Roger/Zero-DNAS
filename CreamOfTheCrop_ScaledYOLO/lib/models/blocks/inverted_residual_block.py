@@ -5,8 +5,11 @@ import torch.nn as nn
 
 from timm.models.layers import create_conv2d
 from timm.models.efficientnet_blocks import make_divisible, \
-    SqueezeExcite #, drop_path
-from timm.models.efficientnet_blocks import DropPath as drop_path
+    SqueezeExcite
+try:
+    from timm.models.efficientnet_blocks import drop_path
+except:
+    from timm.models.efficientnet_blocks import DropPath as drop_path
 class InvertedResidual(nn.Module):
     """ Inverted residual block w/ optional SE and CondConv routing"""
 

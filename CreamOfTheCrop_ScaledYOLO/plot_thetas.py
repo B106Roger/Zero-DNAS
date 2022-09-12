@@ -7,7 +7,8 @@ import matplotlib
 matplotlib.rc('font', size=15)
 
 
-experiment_name = 'VOC-NAS-L' #'VOC-NAS-SS-03'
+experiment_name = 'VOC-NAS' #'VOC-NAS-SS-03'
+search_space = ['8', '6', '4', '2']
 experiment_path = Path(f'experiments/workspace/train/{experiment_name}/')
 thetas_path = experiment_path / 'thetas.txt'
 experiment_graphs = Path('.')
@@ -32,7 +33,7 @@ for idx in range(len(last_thetas) // 2):
         axs[idx, sub_plot].bar(x - 0.3, height=last_thetas[overall_plots][4:8], width=width, color=['b', 'b', 'b', 'b'], align='edge')
         axs[idx, sub_plot].bar(x, height=last_thetas[overall_plots][8:12], width=width, color=['g', 'g', 'g', 'g'])
         axs[idx, sub_plot].set_xticks(x - width)
-        axs[idx, sub_plot].set_xticklabels(['0', '6', '4', '2'])
+        axs[idx, sub_plot].set_xticklabels(search_space)
         axs[idx, sub_plot].set_xlabel('Depth')
         axs[idx, sub_plot].set_ylabel('Softmax output')
         axs[idx, sub_plot].legend(['gamma=0.25', 'gamma=0.5', 'gamma=0.75'])

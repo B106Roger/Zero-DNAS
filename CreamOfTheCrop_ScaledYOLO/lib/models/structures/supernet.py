@@ -695,9 +695,12 @@ def calculate_choices(choices):
             n_choices += 1
     return n_choices
 
-def gen_supernet(flops_minimum=0, flops_maximum=600, **kwargs):
+def gen_supernet(flops_minimum=0, flops_maximum=600, choices=None, **kwargs):
+    print('choices: ', choices)
+    if choices is None:
+        print('choices is none !! please use correct choices')
     # choices = {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]} # big
-    choices = {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}
+    # choices = {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]} # tiny
 
 
     #1 4 0 0

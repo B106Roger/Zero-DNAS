@@ -53,9 +53,20 @@ def config_backup(backup_path, args):
     shutil.copy(args.cfg,  os.path.join(backup_path, os.path.basename(args.cfg)))
     shutil.copy(args.hyp,  os.path.join(backup_path, os.path.basename(args.hyp)))
     shutil.copy(args.data, os.path.join(backup_path, os.path.basename(args.data)))
+    with open(os.path.join(backup_path, 'commandline.txt'), 'w') as f:
+        f.writelines(' '.join(sys.argv))
     
-    
-
+task_dict = {
+    'NAS-SS': { 'GFLOPS': 5.7,  'PARAMS': 32.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'NAS-S':  { 'GFLOPS': 7.0,  'PARAMS': 36.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'NAS-M':  { 'GFLOPS': 9.0,  'PARAMS': 40.0, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'NAS':    { 'GFLOPS': 11.9, 'PARAMS': 52.5, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'NAS-L':  { 'GFLOPS': 16.5, 'PARAMS': 70.2, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+}
+task_name = 'NAS-L'
+TASK_FLOPS      = task_dict[task_name]['GFLOPS']     # e.g TASK_FLOPS  = 5  means 50 GFLOPs
+TASK_PARAMS     = task_dict[task_name]['PARAMS']     # e.g TASK_PARAMS = 32 means 32 million parameters.
+SEARCH_SPACES   = task_dict[task_name]['CHOICES']
 def main():
     args, cfg = parse_config_args('super net training')
     # resolve logging
@@ -95,9 +106,11 @@ def main():
     torch.backends.cudnn.benchmark = False
 
     # generate supernet
+    print('SEARCH_SPACES', SEARCH_SPACES)
     model, sta_num, resolution = gen_supernet(
         flops_minimum=cfg.SUPERNET.FLOPS_MINIMUM,
         flops_maximum=cfg.SUPERNET.FLOPS_MAXIMUM,
+        choices=SEARCH_SPACES,
         num_classes=cfg.DATASET.NUM_CLASSES,
         drop_rate=cfg.NET.DROPOUT_RATE,
         global_pool=cfg.NET.GP,
@@ -276,6 +289,9 @@ def main():
                                         train_loss_fn, prioritized_board, MetaMN, cfg,
                                         theta_optimizer=theta_optimizer,
                                         synflow_cache=synflow_cache,
+                                        
+                                        task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
+                                        
                                         lr_scheduler=lr_scheduler, saver=saver,
                                         output_dir=output_dir, logger=logger,
                                         est=model_est, 

@@ -14,10 +14,9 @@ from lib.utils.general import compute_loss
 from lib.utils.kd_utils import compute_loss_KD
 from lib.utils.synflow import sum_arr_tensor
 
-TASK_FLOPS = 11.9 #11.9          # e.g TASK_FLOPS = 5   means 50 GFLOPs
-TASK_PARAMS = 52.5  # 52.5        # e.g TASK_PARAMS = 32 means 32 million parameters.
+
 # supernet train function
-def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, MetaMN, cfg, device, synflow_cache, theta_optimizer=None,
+def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, MetaMN, cfg, device, synflow_cache, task_flops, task_params, theta_optimizer=None,
                 est=None, logger=None, lr_scheduler=None, saver=None,
                 output_dir='', model_ema=None, local_rank=0, world_size=0, test_loader=None, arch_sampler=None, train_theta=False, wot_map=None):
     batch_time_m = AverageMeter()
@@ -58,11 +57,13 @@ def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, Met
         random_cand = random_cand[1:]
         random_cand.insert(0, [0]) # [0] for stem
 
+        if iteration % 200 == 0: record_theta = True
+        else: record_theta = False
         #######################################
         # Finetuning part
         model.module.update_main()
-        task_flops, task_params = (TASK_FLOPS, TASK_PARAMS)
-        training_loss, flops_loss, params_loss, wot_loss, layer_loss = training_step(task_flops, task_params, device, model, random_cand, est, wot_map, cfg)
+        # task_flops, task_params = (TASK_FLOPS, TASK_PARAMS)
+        training_loss, flops_loss, params_loss, wot_loss, layer_loss = training_step(task_flops, task_params, device, model, random_cand, est, wot_map, cfg, record_theta)
         theta_optimizer.zero_grad()
         training_loss.backward()
         theta_optimizer.step()
@@ -199,7 +200,7 @@ def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, Met
 
 
 
-def training_step(task_flops, task_params, device, model, random_cand, est, wot_map, cfg):
+def training_step(task_flops, task_params, device, model, random_cand, est, wot_map, cfg, record_theta=False):
     output_dir = os.path.join(cfg.SAVE_PATH, cfg.exp_name)
     GPU_NUMBER = 2
     model.module.zero_grad()
@@ -229,17 +230,25 @@ def training_step(task_flops, task_params, device, model, random_cand, est, wot_
     output_layers = output_layers.mean()
     # output_synflow = output_synflow.mean()
     output_params = output_params.mean()
-    with open(os.path.join(output_dir, f'flops-{TASK_FLOPS}-wot-precalculated-it2880.txt'), 'a') as flops_file:
+    with open(os.path.join(output_dir, f'flops-{task_flops}-wot-precalculated-it2880.txt'), 'a') as flops_file:
         flops_file.write(str(output_flops.item()))
         flops_file.write('\n')
-    with open(os.path.join(output_dir, f'params-{TASK_PARAMS}-wot-precalculatedit2880.txt'), 'a') as params_file:
+    with open(os.path.join(output_dir, f'params-{task_params}-wot-precalculatedit2880.txt'), 'a') as params_file:
         params_file.write(str(output_params.item()))
         params_file.write('\n')
-    
+    if record_theta:
+        with open(os.path.join(output_dir, f'history_thetas.txt'), 'a') as thetas_file:
+            beta_distributions=[]
+            for theta in model.module.thetas:
+                alpha=theta().detach().cpu().numpy()
+                beta_distributions.append(softmax(alpha))
+            thetas_file.write(str(beta_distributions))
+            thetas_file.write('\n')
     alpha = 0.03
     beta = 0.01
     gamma = 0.01
     # gamma = 0.001
+    # omega = 0.005
     omega = 0.01
     # training_loss, loss_items = compute_loss(output, target, model)
     output_flops = output_flops / 1000
