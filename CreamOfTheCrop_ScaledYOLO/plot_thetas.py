@@ -7,8 +7,8 @@ import matplotlib
 matplotlib.rc('font', size=15)
 
 
-experiment_name = 'VOC-NAS' #'VOC-NAS-SS-03'
-search_space = ['8', '6', '4', '2']
+experiment_name = 'VOC-NAS-SS-S44-Beta-0025' #'VOC-NAS-SS-03'
+search_space = ['0', '6', '4', '2']
 experiment_path = Path(f'experiments/workspace/train/{experiment_name}/')
 thetas_path = experiment_path / 'thetas.txt'
 experiment_graphs = Path('.')

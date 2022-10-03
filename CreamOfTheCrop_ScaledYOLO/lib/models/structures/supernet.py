@@ -153,6 +153,7 @@ class SuperNet(nn.Module):
 
     def initialize_thetas(self, block_args):
         thetas = nn.ModuleList()
+        print('len(block_args) - len(self.ignore_stages)', len(block_args) - len(self.ignore_stages))
         for i in range(len(block_args) - len(self.ignore_stages)):
             thetas.extend([Theta(torch.Tensor([1.0 / self.choices for i in range(self.choices)]))])
         return thetas
@@ -605,6 +606,14 @@ class SuperNet(nn.Module):
         
         x = self.yolo_detector(x, first_run, calc_metric)
         return wot_map
+    
+    def calculate_beta_reg(self):
+        losses = 0
+        total_stages = len(self.thetas)
+        for i in range(total_stages):
+            losses += torch.logsumexp(torch.as_tensor(self.thetas[i]()), 0)
+        losses /= total_stages
+        return losses
     
     def forward_meta(self, features):
         return self.meta_layer(features.view(1, -1))

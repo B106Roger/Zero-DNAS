@@ -118,3 +118,6 @@ __C.SUPERNET.PICK_METHOD = 'meta'  # pick teacher method
 __C.SUPERNET.META_STA_EPOCH = 20  # start using meta picking method
 __C.SUPERNET.HOW_TO_PROB = 'pre_prob'  # sample method
 __C.SUPERNET.PRE_PROB = (0.05, 0.2, 0.05, 0.5, 0.05, 0.15)  # sample prob in 'pre_prob'
+
+# Experiment Setting
+__C.BETA_REG = False

@@ -14,6 +14,12 @@ from lib.utils.general import compute_loss
 from lib.utils.kd_utils import compute_loss_KD
 from lib.utils.synflow import sum_arr_tensor
 
+def mlc_loss(arch_param):
+    y_pred_neg = arch_param
+    neg_loss = torch.logsumexp(y_pred_neg, dim=-1)
+    aux_loss = torch.mean(neg_loss)
+    return aux_loss
+
 
 # supernet train function
 def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, MetaMN, cfg, device, synflow_cache, task_flops, task_params, theta_optimizer=None,
@@ -63,7 +69,10 @@ def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, Met
         # Finetuning part
         model.module.update_main()
         # task_flops, task_params = (TASK_FLOPS, TASK_PARAMS)
-        training_loss, flops_loss, params_loss, wot_loss, layer_loss = training_step(task_flops, task_params, device, model, random_cand, est, wot_map, cfg, record_theta)
+        training_loss, loss_dict = training_step(task_flops, task_params, device, model, random_cand, est, wot_map, cfg, record_theta)
+        flops_loss, params_loss, wot_loss, layer_loss = loss_dict['flops_loss'], loss_dict['params_loss'], loss_dict['zero_cost'], loss_dict['layer_loss']
+        reg_losss=loss_dict['reg_loss']
+        
         theta_optimizer.zero_grad()
         training_loss.backward()
         theta_optimizer.step()
@@ -131,6 +140,7 @@ def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, Met
         overall_losses_m.update(reduced_loss_flops.item() * reduced_loss_training.item(), batch_size)
         prec1_m.update(map50, batch_size)
         batch_time_m.update(time.time() - end)
+        # print('theta shape', model.module.thetas_main[0]().shape)
 
         if iteration % (iterations // 2 -1) == 0:
             distributions = softmax(model.module.thetas[0]().detach().cpu().numpy())
@@ -152,6 +162,7 @@ def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, Met
                     'Params_loss: {params_loss:>7.4f}  '
                     'Wot_loss: {wot_loss:>7.4f}  '
                     'Layer_loss: {layer_loss:>7.4f}  '
+                    'Reg_loss: {reg_losss:>7.4} '
                     'Time: {batch_time.val:.3f}s, {rate:>7.2f}/s  '
                     '({batch_time.avg:.3f}s, {rate_avg:>7.2f}/s)  '
                     'LR: {lr:.3e}  '
@@ -165,6 +176,7 @@ def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, Met
                         params_loss=params_loss,
                         wot_loss=wot_loss,
                         layer_loss=layer_loss,
+                        reg_losss=reg_losss,
                         top1=prec1_m,
                         top5=prec5_m,
                         temperature=model.module.temperature,
@@ -225,6 +237,8 @@ def training_step(task_flops, task_params, device, model, random_cand, est, wot_
     output_flops = model.module.calculate_flops(random_cand, est.flops_dict, overall_flops)
     output_params = model.module.calculate_parameters(random_cand, est.params_dict, overall_params)
     output_layers = model.module.calculate_layers(random_cand, overall_layers)
+    reg_loss = model.module.calculate_beta_reg()    
+    
     output_flops = output_flops.mean()
     output_wot = output_wot.mean()
     output_layers = output_layers.mean()
@@ -244,12 +258,16 @@ def training_step(task_flops, task_params, device, model, random_cand, est, wot_
                 beta_distributions.append(softmax(alpha))
             thetas_file.write(str(beta_distributions))
             thetas_file.write('\n')
+    # for params_loss
     alpha = 0.03
+    # for flops_loss
     beta = 0.01
+    # for zero cost loss
     gamma = 0.01
-    # gamma = 0.001
-    # omega = 0.005
+    # for depth loss
     omega = 0.01
+    # for regularization loss, default 0.01
+    eta = 0.01
     # training_loss, loss_items = compute_loss(output, target, model)
     output_flops = output_flops / 1000
     flops_loss = torch.log(output_flops ** beta)
@@ -264,18 +282,23 @@ def training_step(task_flops, task_params, device, model, random_cand, est, wot_
     # wot_loss = 1/torch.log(output_wot ** gamma)
     wot_loss = -(output_wot * gamma)
     # synflow_loss = 1/torch.log(output_synflow ** gamma)
-    # print('flops_loss', flops_loss)
-    # print('params_loss', params_loss)
-    # print('synflow loss', synflow_loss)
-    # exit()
-    # loss = synflow_loss * flops_loss
-    # loss = synflow_loss + flops_loss + params_loss
-    # loss = flops_loss
-    # loss = wot_loss + flops_loss + params_loss
-    loss = wot_loss + flops_loss + params_loss + layers_loss
-    # print(loss)
+    
+    if cfg.BETA_REG: 
+        reg_loss = reg_loss * eta
+    else:
+        reg_loss = reg_loss * 0.
+        
+    
+    loss = wot_loss + flops_loss + params_loss + layers_loss + reg_loss
+    loss_dict = {
+        'flops_loss': flops_loss,
+        'params_loss': params_loss,
+        'layer_loss': layers_loss,
+        'zero_cost': wot_loss,
+        'reg_loss': reg_loss
+    }
 
-    return loss, flops_loss, params_loss, wot_loss, layers_loss
+    return loss, loss_dict
     # return loss, overall_flops.mean(), overall_params.mean(), wot_loss
 
 def arch_2_subnet(model, architecture):
