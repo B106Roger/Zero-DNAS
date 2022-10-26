@@ -30,4 +30,86 @@ yolov5
 ## Search Command
 python tools/train.py --cfg experiments/configs/train/train.yaml --data voc.yaml --hyp hyp.scratch.yaml --device 1,2 --exp_name VOC-NAS-SS
 ## Training Command
-python ./train.py --data ./data/voc.yaml --hyp ./data/hyp.finetune.yaml --cfg ./models/yolov5m.yaml --batch-size 16 --weights '' --device 1,2 --img-size 416
+python ./train.py --data ./data/voc.yaml --hyp ./data/hyp.finetune.yaml --cfg ./models/yolov5m.yaml --batch-size 16 --weights '' --device 1 --img-size 416
+
+
+
+
+    .
+    └── VOCdevkit
+        └── VOC2007
+            ├── SegmentationObject
+            ├── SegmentationClass     
+            ├── JPEGImages      
+            │   ├── 009961.jpg      
+            │   ├── 009959.jpg      
+            │   └── ...
+            ├── ImageSets      
+            │   ├── Segmentation      
+            │   ├── Main       
+            │   │   ├── ...
+            │   │   ├── trainval.txt
+            │   │   └── ...     
+            │   └── Layout      
+            ├── Annotations  
+            │   ├── 009961.yaml      
+            │   ├── 009959.yaml     
+            │   └── ...        
+            └──
+
+
+
+    VOC2007
+    ├── images      
+    │   ├── 009961.jpg      
+    │   ├── 009959.jpg      
+    │   └── ...
+    ├── annotations  
+    │   ├── 009961.yaml      
+    │   ├── 009959.yaml     
+    │   └── ...        
+    ├── labels          # Empty Folder Now !!!
+    ├── trainval.txt    # Should Change A Little Bit Later !!
+    └── xml2yolo.py     # Would Provide Latter !!
+            
+
+
+
+
+    VOC2007
+    ├── images      
+    │   ├── 009961.jpg      
+    │   ├── 009959.jpg      
+    │   └── ...
+    ├── annotations  
+    │   ├── 009961.yaml      
+    │   ├── 009959.yaml     
+    │   └── ...        
+    ├── labels         
+    │   ├── 009961.txt      
+    │   ├── 009959.txt     
+    │   └── ...        
+    ├── classes.txt     # Would Be Generated After Running xml2yolo.py   
+    ├── trainval.txt   
+    ├── test.txt        # Generate test.txt is the same way as trainval.txt
+    └── xml2yolo.py     
+
+
+    ScaledYOLOv4
+    ├── data      
+    │   └── VOC2007    
+    │       └── ...
+    │   ├── voc.yaml
+    │   ├── coco.yaml
+    │   ├── hyp.finetune.yaml
+    │   ├── hyp.scratch.yaml
+    │   └── ...
+    ├── models 
+    │   └── ...
+    ├── utils        
+    │   └── ...
+    ├── LICENSE
+    ├── README.md   
+    ├── detect.py
+    ├── test.py
+    └── train.py     

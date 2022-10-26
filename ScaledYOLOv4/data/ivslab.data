@@ -1,0 +1,4 @@
+classes=3
+train=data/ivslab/train.txt
+valid=data/ivslab/test.txt
+names=data/ivslab.names
