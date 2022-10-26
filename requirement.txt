@@ -1,11 +1,18 @@
-pyyaml
+
+torch
+torchvision
+torchaudio
+numpy
+timm
+thop
 tensorboard
-tqdm
+
 opencv-python==4.3.*
 matplotlib
 scikit-learn
 imageio
 
-timm
-thop
+tqdm
 yasc
+pyyaml
+ninja

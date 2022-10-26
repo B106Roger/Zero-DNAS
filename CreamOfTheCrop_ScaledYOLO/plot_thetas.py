@@ -4,11 +4,19 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 import matplotlib
+import argparse
 matplotlib.rc('font', size=15)
 
 
-experiment_name = 'VOC-NAS-SS-S44-Beta-0025' #'VOC-NAS-SS-03'
-search_space = ['0', '6', '4', '2']
+parser = argparse.ArgumentParser(description='Plot the theta distribution according to the serach result')
+parser.add_argument('--exp_name', type=str, required=True)
+parser.add_argument('--sp', type=str, required=True, help="describe the search space of the model",\
+    choices=['large', 'small'])
+args = parser.parse_args()
+
+
+experiment_name = args.exp_name  #'VOC-NAS-SS-03'
+search_space = ['0', '6', '4', '2'] if args.sp=='large' else ['8','6','4','2']
 experiment_path = Path(f'experiments/workspace/train/{experiment_name}/')
 thetas_path = experiment_path / 'thetas.txt'
 experiment_graphs = Path('.')
