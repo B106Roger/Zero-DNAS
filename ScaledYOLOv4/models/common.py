@@ -49,16 +49,29 @@ class Bottleneck(nn.Module):
 
 class BottleneckCSP(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
-    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+    # Modify from    https://github.com/chiahuilin0531/ScaledYOLOv4
+    def __init__(self, c1, c2, n=1, e=0.5, shortcut=True, g=1):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(BottleneckCSP, self).__init__()
-        c_ = int(c2 * e)  # hidden channels
-        self.cv1 = Conv(c1, c_, 1, 1)
-        self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
-        self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
-        self.cv4 = Conv(2 * c_, c2, 1, 1)
-        self.bn = nn.BatchNorm2d(2 * c_)  # applied to cat(cv2, cv3)
-        self.act = Mish()
-        self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
+        self.search_type = 0
+        if self.search_type == 0:
+            c_ = int(c2 * e)  # hidden channels
+            self.cv1 = Conv(c1, c_, 1, 1)
+            self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
+            self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
+            self.cv4 = Conv(2 * c_, c2, 1, 1)
+            self.bn = nn.BatchNorm2d(2 * c_)  # applied to cat(cv2, cv3)
+            self.act = Mish()
+            self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
+        elif self.search_type == 1:
+            c_h = int(c2 * e)        # hidden channels. extract deep feature.
+            c_s = int(c2 * (1 - e))  # shown  channels.
+            self.cv1 = Conv(c1, c_h, 1, 1)
+            self.cv2 = nn.Conv2d(c1, c_s, 1, 1, bias=False)
+            self.cv3 = nn.Conv2d(c_h, c_h, 1, 1, bias=False)
+            self.cv4 = Conv(c2, c2, 1, 1)
+            self.bn = nn.BatchNorm2d(c2)  # applied to cat(cv2, cv3)
+            self.act = Mish()
+            self.m = nn.Sequential(*[Bottleneck(c_h, c_h, shortcut, g, e=1.0) for _ in range(n)])
 
     def forward(self, x):
         y1 = self.cv3(self.m(self.cv1(x)))
@@ -68,22 +81,66 @@ class BottleneckCSP(nn.Module):
 
 class BottleneckCSP2(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
-    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+    def __init__(self, c1, c2, n=1, e=0.5, shortcut=False, g=1):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(BottleneckCSP2, self).__init__()
-        c_ = int(c2)  # hidden channels
-        self.cv1 = Conv(c1, c_, 1, 1)
-        self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
-        self.cv3 = Conv(2 * c_, c2, 1, 1)
-        self.bn = nn.BatchNorm2d(2 * c_) 
-        self.act = Mish()
-        self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
+        self.search_type = 1
+        if self.search_type==0:
+            c_ = int(c2)  # hidden channels
+            self.cv1 = Conv(c1, c_, 1, 1)
+            self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
+            self.cv3 = Conv(2 * c_, c2, 1, 1)
+            self.bn = nn.BatchNorm2d(2 * c_) 
+            self.act = Mish()
+            self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
+        elif self.search_type==1:
+            c_ = int(c2 * (e + 0.5))  # hidden channels
+            self.cv1 = Conv(c1, c_, 1, 1)
+            self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
+            self.cv3 = Conv(2 * c_, c2, 1, 1)
+            self.bn = nn.BatchNorm2d(2 * c_) 
+            self.act = Mish()
+            self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
+        elif self.search_type==2:       # Version1 Pre-Modify Bottleneck Version
+            c_  = int(c2)
+            c_h = int(c_ * (0.5 + e))  # hidden channels
+            c_s = int(c_ * (1.5 - e))  # shown  channels
+            self.cv1 = Conv(c1, c_, 1, 1)
+            self.cv2 = nn.Conv2d(c_, c_s, 1, 1, bias=False)
+            self.cv3 = Conv(2 * c_, c2, 1, 1)
+            self.bn = nn.BatchNorm2d(2 * c_) 
+            self.act = Mish()
+            self.pre_m = Conv(c_, c_h, 1, 1)
+            self.m = nn.Sequential(*[Bottleneck(c_h, c_h, shortcut, g, e=1.0) for _ in range(n)])
+        elif self.search_type==3:       # Version2 Split-Channel Version
+            c_  = int(c2)
+            c_h = self.c_h = int(c_ * (0.5 + e))  # hidden channels
+            c_s = self.c_s = int(c_ * (1.5 - e))  # shown  channels
+            self.cv1 = Conv(c1, c_ * 2, 1, 1)
+            self.cv2 = nn.Conv2d(c_s, c_s, 1, 1, bias=False)
+            self.cv3 = Conv(2 * c_, c2, 1, 1)
+            self.bn = nn.BatchNorm2d(2 * c_) 
+            self.act = Mish()
+            self.m = nn.Sequential(*[Bottleneck(c_h, c_h, shortcut, g, e=1.0) for _ in range(n)])
 
     def forward(self, x):
-        x1 = self.cv1(x)
-        y1 = self.m(x1)
-        y2 = self.cv2(x1)
-        return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
-
+        if self.search_type == 0 or self.search_type == 1:
+            x1 = self.cv1(x)
+            y1 = self.m(x1)
+            y2 = self.cv2(x1)
+            return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
+        elif self.search_type == 2:
+            x1 = self.cv1(x)
+            y1 = self.m(self.pre_m(x1))
+            y2 = self.cv2(x1)
+            return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))        
+        elif self.search_type == 3:
+            x1 = self.cv1(x)
+            x11 = x1[:, :self.c_h]
+            x12 = x1[:, self.c_h:]
+            
+            y1 = self.m(x11)
+            y2 = self.cv2(x12)
+            return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
 
 class VoVCSP(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks

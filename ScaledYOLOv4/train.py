@@ -16,6 +16,7 @@ from torch.cuda import amp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import shutil
 
 import test  # import test.py to get mAP after each epoch
 from models.yolo import Model
@@ -27,7 +28,17 @@ from utils.general import (
 from utils.google_utils import attempt_download
 from utils.torch_utils import init_seeds, ModelEMA, select_device, intersect_dicts
 
+def backup_config(args, log_dir):
+    log_dir = os.path.join(str(log_dir), 'config')
+    os.makedirs(log_dir, exist_ok=True)
+    shutil.copy('./models/yolo.py', os.path.join(log_dir, 'yolo.py'))
+    shutil.copy('./models/common.py', os.path.join(log_dir, 'common.py'))
+    shutil.copy('./train.py', os.path.join(log_dir, 'train.py'))
+    
+    
+    shutil.copy(args.cfg, os.path.join(log_dir, os.path.basename(args.cfg)))
 
+    
 def train(hyp, opt, device, tb_writer=None):
     print(f'Hyperparameters {hyp}')
     log_dir = Path(tb_writer.log_dir) if tb_writer else Path(opt.logdir) / 'evolve'  # logging directory
@@ -38,6 +49,7 @@ def train(hyp, opt, device, tb_writer=None):
     results_file = str(log_dir / 'results.txt')
     epochs, batch_size, total_batch_size, weights, rank = \
         opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank
+    backup_config(opt, log_dir)
 
     # TODO: Use DDP logging. Only the first process is allowed to log.
     # Save run settings
@@ -45,6 +57,7 @@ def train(hyp, opt, device, tb_writer=None):
         yaml.dump(hyp, f, sort_keys=False)
     with open(log_dir / 'opt.yaml', 'w') as f:
         yaml.dump(vars(opt), f, sort_keys=False)
+    
 
     # Configure
     cuda = device.type != 'cpu'

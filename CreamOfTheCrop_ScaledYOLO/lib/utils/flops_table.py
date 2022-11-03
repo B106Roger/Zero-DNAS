@@ -23,7 +23,8 @@ class FlopsEst(object):
         self.params_fixed = 0
         self.flops_fixed = 0
         
-        if Path('flops_dict.json').exists() and Path('params_dict.json').exists():
+        # if Path('flops_dict.json').exists() and Path('params_dict.json').exists():
+        if False:
             self.load_flops_dict()
             self.load_params_dict()
         else:
@@ -39,12 +40,15 @@ class FlopsEst(object):
             # Compute Blocks FLOPs
             print('Computing blocks FLOPs...')
             for block_id, block in enumerate(model.blocks):
+                block_id = str(block_id)
                 self.flops_dict[block_id] = {}
                 self.params_dict[block_id] = {}
                 for module_id, module in enumerate(block):
+                    module_id = str(module_id)
                     self.flops_dict[block_id][module_id] = {}
                     self.params_dict[block_id][module_id] = {}
                     for choice_id, choice in enumerate(module):
+                        choice_id = str(choice_id)
                         if choice.get_block_name() == 'concat':
                             out_chs = choice.block_arguments['out_chs']
                             detect_input_dims.append((1, out_chs, spatial_dimension[0], spatial_dimension[1]))

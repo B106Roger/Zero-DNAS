@@ -5,6 +5,7 @@ CreamOfTehCrop_ScaledYOLO/data/obj-st
 CreamOfTehCrop_ScaledYOLO/data/VOC2007
 CreamOfTehCrop_ScaledYOLO/experiments/workspace
 CreamOfTehCrop_ScaledYOLO/experiment_results
+CreamOfTheCrop_ScaledYOLO/thetas_weights
 
 CreamOfTehCrop_YOLOv5/data/obj-st
 CreamOfTehCrop_YOLOv5/data/VOC2007
@@ -15,6 +16,7 @@ ScaledYOLOv4/data/coco
 ScaledYOLOv4/data/obj-st
 ScaledYOLOv4/data/VOC2007
 ScaledYOLOv4/runs
+ScaledYOLOv4/models/*.yaml
 ScaledYOLOv4/models/_MY_OLD_RESULT
 
 mish-cuda
