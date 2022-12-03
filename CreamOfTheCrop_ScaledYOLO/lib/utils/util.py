@@ -184,8 +184,8 @@ def check_tensor_in_list(atensor, alist):
 def create_optimizer_supernet(args, model, has_apex, filter_bias_and_bn=True):
     opt_lower = args.opt.lower()
     print(f'create_optimizer_supernet || opt_lower: {opt_lower} || weight_decay: {args.weight_decay} || momentum: {args.momentum}')
-    thetas_lr = 0.005
-    thetas_weight_decay = 5 * 1e-4
+    thetas_lr = args.theta_optimizer.LR
+    thetas_weight_decay = args.theta_optimizer.WEIGHT_DECAY
     thetas_params = model.thetas_main.parameters()
     # print(args)
 

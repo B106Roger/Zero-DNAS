@@ -41,7 +41,7 @@ from lib.utils.util import parse_config_args, get_logger, \
     create_optimizer_supernet, create_supernet_scheduler
 from lib.utils.datasets import create_dataloader
 from lib.utils.kd_utils import FeatureAdaptation
-from lib.models.blocks.yolo_blocks import Conv, ConvNP
+from lib.models.blocks.yolo_blocks import Conv, ConvNP, BottleneckCSP, BottleneckCSP2, set_algorithm_type
 from lib.utils.general import check_img_size, labels_to_class_weights
 from lib.utils.torch_utils import select_device
 from lib.utils.attentive_sampling import collect_samples
@@ -71,7 +71,7 @@ task_dict = {
     'NAS':    { 'GFLOPS': 11.9, 'PARAMS': 52.5, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS-L':  { 'GFLOPS': 16.5, 'PARAMS': 70.2, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
 }
-task_name = 'NAS-S'
+task_name = 'NAS'
 TASK_FLOPS      = task_dict[task_name]['GFLOPS']     # e.g TASK_FLOPS  = 5  means 50 GFLOPs
 TASK_PARAMS     = task_dict[task_name]['PARAMS']     # e.g TASK_PARAMS = 32 means 32 million parameters.
 SEARCH_SPACES   = task_dict[task_name]['CHOICES']
@@ -112,7 +112,11 @@ def main():
     np.random.seed(cfg.SEED)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
+    # set block static argument
+    set_algorithm_type('ZeroCost')
+    BottleneckCSP.set_search_space(cfg.search_space.BOTTLENECK_CSP)
+    BottleneckCSP2.set_search_space(cfg.search_space.BOTTLENECK_CSP2)
+    
     # generate supernet
     print('SEARCH_SPACES', SEARCH_SPACES)
     model, sta_num, resolution = gen_supernet(

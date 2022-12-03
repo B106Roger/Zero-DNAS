@@ -41,7 +41,7 @@ from lib.utils.util import parse_config_args, get_logger, \
     create_optimizer_supernet, create_supernet_scheduler
 from lib.utils.datasets import create_dataloader
 from lib.utils.kd_utils import FeatureAdaptation
-from lib.models.blocks.yolo_blocks import Conv, ConvNP
+from lib.models.blocks.yolo_blocks import Conv, ConvNP, BottleneckCSP, BottleneckCSP2, set_algorithm_type
 from lib.utils.general import check_img_size, labels_to_class_weights, is_parallel, compute_loss, test, ModelEMA
 from lib.utils.torch_utils import select_device
 from lib.utils.attentive_sampling import collect_samples
@@ -120,6 +120,10 @@ def main():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+    # set search space argument
+    set_algorithm_type('DNAS')
+    BottleneckCSP.set_search_space(cfg.search_space.BOTTLENECK_CSP)
+    BottleneckCSP2.set_search_space(cfg.search_space.BOTTLENECK_CSP2)
     # generate supernet
     print('SEARCH_SPACES', SEARCH_SPACES)
     model, sta_num, resolution = gen_supernet(

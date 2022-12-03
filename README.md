@@ -24,10 +24,14 @@ Zero-DNAS
 ```
 # Detail
 - Search
-    - search would conduct on 288 resolution, because we can't fit 416 resolution when using large search space
-    - but flops calculation are conduct in 416 resolution
+    - ZeroDNAS
+        - search would conduct on 288 resolution, because we can't fit 416 resolution when using large search space
+        - but flops calculation are conduct in 416 resolution
+    - DNAS
+        - search on 416x416 and flop loss is also calculated in 416.
 - Train
-    - train would conduct on 416 resolution.
+    - ZeroDNAS: 416x416
+    - DNAS: 416x416
 ----
 # Execution Step (For ScaledYOLOv4)
 ## 1 Search Command
@@ -35,9 +39,13 @@ Zero-DNAS
 ```
 cd CreamOfTheCrop_ScaledYOLO/
 # Training Zero-DNAS
+# Step1 set your hardware constraint in tools/train.py
+# Step2
 python tools/train.py --cfg experiments/configs/train/train.yaml --data data/config/voc.yaml --hyp hyp.scratch.yaml --device 1,2 --exp_name VOC-NAS-SS
 
 # Training YOLO-DNAS
+# Step1 set your hardware constraint in tools/train_dnas.py
+# Step2
 python tools/train_dnas.py --cfg experiments/configs/train/train_dnas.yaml --data data/config/voc_dnas.yaml --hyp hyp.scratch.yaml --device 1 --exp_name DNAS
 
 
@@ -45,11 +53,13 @@ python tools/train_dnas.py --cfg experiments/configs/train/train_dnas.yaml --dat
 
 - data: change the data.yaml file according the dataset you want to search for. (voc.yaml, coco.yaml ......)
 - exp_name: name your experiment, later some of information during training would be store in the `CreamOfTheCrop_ScaledYOLO/experiments/workspace/train/{exp_name}`
-    - alpha_distirbution.txt: the distribution of architecture parameter for each epoch.
-    - beta_distribution.txt: the distribtuion of architecture parameter (normalized by softmax) for each epochs.
-    - flops-{FLOPS}-wot-precalculated-it{ITERATIONS}.txt: the expectation of FLOPS during a period of training steps
-    - history_thetas.txt: the beta distributionfor a period of training steps.
-    - train.log: the training loss for a period of training steps.
+    - All Training Algorihtm
+        - alpha_distirbution.txt: the distribution of architecture parameter for each epoch.
+        - beta_distribution.txt: the distribtuion of architecture parameter (normalized by softmax) for each epochs.
+        - train.log: the training loss for a period of training steps.
+    - ZeroDNAS
+        - flops-{FLOPS}-wot-precalculated-it{ITERATIONS}.txt: the expectation of FLOPS during a period of training steps
+        - history_thetas.txt: the beta distributionfor a period of training steps.
 
 
 ## 2 Create Model Config

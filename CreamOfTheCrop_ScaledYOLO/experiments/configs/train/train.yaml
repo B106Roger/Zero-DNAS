@@ -34,9 +34,20 @@ NET:
     FORCE_CPU: False # force model ema to be tracked on CPU
     DECAY: 0.9998
 
+SEARCH_SPACE:
+  BOTTLENECK_CSP: 0
+  BOTTLENECK_CSP2: 0
+
 OPT: 'sgd'
 LR: 0.01
 WEIGHT_DECAY: 0.0005
+THETA_OPTIMIZER:
+  OPT: 'adam'
+  OPT_EPS: 1e-2 # eps for adam
+  LR: 0.01
+  MOMENTUM: 0.0
+  WEIGHT_DECAY: 5e-4
+
 EPOCHS: 40
 META_LR: 1e-4
 
