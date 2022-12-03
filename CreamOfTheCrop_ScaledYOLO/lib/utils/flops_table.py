@@ -8,6 +8,7 @@ from pathlib import Path
 import json
 
 from lib.utils.flops_counter import get_model_complexity_info
+from lib.models.blocks.yolo_blocks import get_algorithm_type
 import numpy as np
 
 
@@ -91,7 +92,7 @@ class FlopsEst(object):
                             print(f'[Up] flops {spatial_dimension}', flops / 1e6, 'M', '-'*40)
                             # flops = 0                            
                             #######################################
-                            self.flops_dict[block_id][module_id][choice_id] = flops / 1e6       # FLOPS(M)
+                            self.flops_dict[block_id][module_id][choice_id] =0 # flops / 1e6    # FLOPS(M)
                             self.params_dict[block_id][module_id][choice_id] = 0                # Params(M)
                             # Store the flop and param for each choices
 
@@ -109,7 +110,13 @@ class FlopsEst(object):
                                 as_strings=False, 
                                 print_per_layer_stat=False
                             )
-                            flops = macs * 2
+                            algorithm_type = get_algorithm_type()
+                            if algorithm_type == 'ZeroCost':
+                                flops = macs
+                            elif algorithm_type == 'DNAS':
+                                flops = macs * 2
+                            else:
+                                raise ValueError(f"Invalid algorithm type {algorithm_type}")
                             spatial_dimension = next_spatial_dimension
 
                             self.flops_dict[block_id][module_id][choice_id] = flops / 1e6       # FLOPS(M)

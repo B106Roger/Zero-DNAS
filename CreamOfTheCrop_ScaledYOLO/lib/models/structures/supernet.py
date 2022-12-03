@@ -9,7 +9,7 @@ from lib.utils.search_structure_supernet import *
 from lib.models.builders.build_supernet import *
 import numpy as np
 from lib.utils.op_by_layer_dict import flops_op_dict
-from lib.models.blocks.yolo_blocks import Detect, BottleneckCSP, BottleneckCSP2, C3
+from lib.models.blocks.yolo_blocks import Detect, BottleneckCSP, BottleneckCSP2, C3, get_algorithm_type
 # from mish_cuda import MishCuda as Mish
 from torch import optim
 import torch
@@ -151,8 +151,13 @@ class SuperNet(nn.Module):
         self.stride = self.yolo_detector.stride
         
         # [Roger]
-        # efficientnet_init_weights(self)
-        self._initialize_weights()
+        algorithm_type = get_algorithm_type()
+        if algorithm_type == 'ZeroCost':
+            efficientnet_init_weights(self)
+        elif algorithm_type == 'DNAS':
+            self._initialize_weights()
+        else:
+            raise ValueError(f"Invalid algorithm type {algorithm_type}")
 
     def get_classifier(self):
         return self.classifier

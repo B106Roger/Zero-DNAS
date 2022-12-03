@@ -5,7 +5,30 @@ import torch.nn as nn
 from mish_cuda import MishCuda as Mish
 from lib.utils.synflow import synflow, sum_arr
 
-TYPE = 'DNAS' # ZeroCost or DNAS
+TYPE = None # ZeroCost or DNAS
+
+def set_algorithm_type(type_literal):
+    """
+    Option
+        ZeroCost:
+            1. use GroupNormalization to replace all the BatchNormalization
+            2. use MACS as the flop constraint [FLOPS = MAC * 2]
+            3. use 'efficientnet_init_weights' to initialize yolo-detector
+        DNAS:
+            1. use BatchNormalization
+            2. use 'Real' flop constraint [FLOPS = MAC * 2]
+            3. use 'the initialize method from ScaledYOLO source code'
+    """
+    global TYPE
+    if type_literal not in ['DNAS', 'ZeroCost']:
+        raise ValueError(f"Invalid Search Algorithm {type_literal}")    
+    TYPE = type_literal
+    
+def get_algorithm_type():
+    global TYPE
+    if TYPE not in ['DNAS', 'ZeroCost']:
+        raise ValueError(f"Didn't Initialize the TYPE parameter.")    
+    return TYPE    
 
 def autopad(k, p=None):  # kernel, padding
     # Pad to 'same'
@@ -100,7 +123,7 @@ class BottleneckCSP(nn.Module):
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(BottleneckCSP, self).__init__()
         self.n = n
-        self.search_type = 0
+        self.search_type = self.search_space_id
         if self.search_type == 0:
             c_ = int(c2 * e)  # hidden channels
             self.cv1 = Conv(c1, c_, 1, 1)
@@ -136,6 +159,9 @@ class BottleneckCSP(nn.Module):
             self.m = nn.Sequential(*[Bottleneck(c_h, c_h, shortcut, g, e=1.0) for _ in range(n)])
         self.block_name = f'bottlecsp_num{n}_gamma{e}'
 
+    @classmethod
+    def set_search_space(cls, search_space_id):
+        cls.search_space_id = search_space_id
 
     @torch.no_grad()
     def linearize(self):
@@ -214,7 +240,7 @@ class BottleneckCSP2(nn.Module):
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(BottleneckCSP2, self).__init__()
         self.n = n
-        self.search_type = 1
+        self.search_type = self.search_space_id
         if self.search_type == 0:
             c_ = int(c2)  # hidden channels
             self.cv1 = Conv(c1, c_, 1, 1)
@@ -268,6 +294,10 @@ class BottleneckCSP2(nn.Module):
             self.m = nn.Sequential(*[Bottleneck(c_h, c_h, shortcut, g, e=1.0) for _ in range(n)])
 
         self.block_name = f'bottlecsp2_num{n}_gamma{e}'
+
+    @classmethod
+    def set_search_space(cls, search_space_id):
+        cls.search_space_id = search_space_id
 
     def get_block_name(self):
         return self.block_name
