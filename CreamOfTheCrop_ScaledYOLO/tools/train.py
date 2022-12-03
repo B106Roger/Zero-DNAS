@@ -149,8 +149,10 @@ def main():
     for idx, module in enumerate(model.modules()):
         if isinstance(module, ConvNP):
             CBL_idx.append(idx)    
-    # initialize flops look-up table
-    model_est = FlopsEst(model, input_shape=(2, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE))
+    # initialize flops look-up table. 
+    # It's well-known that "MACS * 2 = FLOPs"
+    # Note that the batch should be 2, because the origin code is used to calculate MACS 
+    model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE))
     if args.collect_samples > 0:
         collect_samples(args.collect_samples, model, prioritized_board, model_est)
         exit()

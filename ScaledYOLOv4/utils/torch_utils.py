@@ -137,8 +137,9 @@ def model_info(model, verbose=False):
 
     try:  # FLOPS
         from thop import profile
-        flops = profile(deepcopy(model), inputs=(torch.zeros(1, 3, 64, 64),), verbose=False)[0] / 1E9 * 2
-        fs = ', %.1f GFLOPS' % (flops * 100)  # 640x640 FLOPS
+        resolution = (416, 416)
+        flops = profile(deepcopy(model), inputs=(torch.zeros(1, 3, resolution[0], resolution[1]),), verbose=False)[0] / 1E9 * 2
+        fs = f', {flops:.1f} GFLOPS  Resolution: {resolution}'   # 640x640 FLOPS
     except:
         fs = ''
 

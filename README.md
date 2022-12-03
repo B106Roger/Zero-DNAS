@@ -34,8 +34,13 @@ Zero-DNAS
 
 ```
 cd CreamOfTheCrop_ScaledYOLO/
+# Training Zero-DNAS
+python tools/train.py --cfg experiments/configs/train/train.yaml --data data/config/voc.yaml --hyp hyp.scratch.yaml --device 1,2 --exp_name VOC-NAS-SS
 
-python tools/train.py --cfg experiments/configs/train/train.yaml --data voc.yaml --hyp hyp.scratch.yaml --device 1,2 --exp_name VOC-NAS-SS
+# Training YOLO-DNAS
+python tools/train_dnas.py --cfg experiments/configs/train/train_dnas.yaml --data data/config/voc_dnas.yaml --hyp hyp.scratch.yaml --device 1 --exp_name DNAS
+
+
 ```
 
 - data: change the data.yaml file according the dataset you want to search for. (voc.yaml, coco.yaml ......)

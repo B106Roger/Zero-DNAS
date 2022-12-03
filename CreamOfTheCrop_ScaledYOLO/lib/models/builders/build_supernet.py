@@ -263,7 +263,7 @@ class SuperNetBuilder:
                 choice_blocks = nn.ModuleList()
                 block_args_copy = deepcopy(block_args)
                 block_type = block_args['block_type']
-                if self.choice_num == 1 or (block_type != 'bottlecsp' and block_type != 'bottlecsp2'):
+                if  (block_type != 'bottlecsp' and block_type != 'bottlecsp2'):
                     # create the block
                     block = self._make_block(
                         block_args, 0, total_block_idx, total_block_count)
@@ -314,6 +314,7 @@ class SuperNetBuilder:
                                                block.conv_dw.stride[0])
                         choice_blocks.append(block)
 
+                    print( f"block_idx:{block_idx} | block_type: {block_type} | choice_num: {self.choice_num}")
                 blocks.append(choice_blocks)
                 # incr global block idx (across all stacks)
                 total_block_idx += 1

@@ -2,9 +2,10 @@ import math
 
 import torch
 import torch.nn as nn
-# from mish_cuda import MishCuda as Mish
+from mish_cuda import MishCuda as Mish
 from lib.utils.synflow import synflow, sum_arr
 
+TYPE = 'DNAS' # ZeroCost or DNAS
 
 def autopad(k, p=None):  # kernel, padding
     # Pad to 'same'
@@ -17,8 +18,14 @@ class Conv(nn.Module):
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
         super(Conv, self).__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
-        self.bn = nn.GroupNorm(1, c2)
-        self.act = nn.ReLU() if act else nn.Identity()
+        if TYPE=='ZeroCost':
+            self.bn = nn.GroupNorm(1, c2)
+            self.act = nn.ReLU() if act else nn.Identity()
+        elif TYPE=='DNAS':
+            self.bn = nn.BatchNorm2d(c2)
+            self.act = Mish() if act else nn.Identity()
+        else:
+            raise ValueError(f'Invalid Type: {TYPE}')
         self.block_name = f'cn_k{k}_s{s}'
 
 
@@ -36,8 +43,14 @@ class ConvNP(nn.Module):
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
         super(ConvNP, self).__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
-        self.bn = nn.GroupNorm(1, c2)
-        self.act = nn.ReLU() if act else nn.Identity()
+        if TYPE=='ZeroCost':
+            self.bn = nn.GroupNorm(1, c2)
+            self.act = nn.ReLU() if act else nn.Identity()
+        elif TYPE=='DNAS':
+            self.bn = nn.BatchNorm2d(c2)
+            self.act = Mish() if act else nn.Identity()
+        else:
+            raise ValueError(f'Invalid Type: {TYPE}')
         self.block_name = f'cn_k{k}_s{s}'
 
 
@@ -94,8 +107,14 @@ class BottleneckCSP(nn.Module):
             self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
             self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
             self.cv4 = Conv(2 * c_, c2, 1, 1)
-            self.bn = nn.GroupNorm(1, 2 * c_)  # applied to cat(cv2, cv3)
-            self.act = nn.ReLU()
+            if TYPE=='ZeroCost':
+                self.bn = nn.GroupNorm(1, 2 * c_)  # applied to cat(cv2, cv3)
+                self.act = nn.ReLU()
+            elif TYPE=='DNAS':
+                self.bn = nn.BatchNorm2d(2 * c_)  # applied to cat(cv2, cv3)
+                self.act = Mish()
+            else:
+                raise ValueError(f'Invalid Type: {TYPE}')
             self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
         elif self.search_type == 1:
             c_ = int(c2)             # hidden channels
@@ -105,8 +124,15 @@ class BottleneckCSP(nn.Module):
             self.cv2 = nn.Conv2d(c1, c_s, 1, 1, bias=False)
             self.cv3 = nn.Conv2d(c_h, c_h, 1, 1, bias=False)
             self.cv4 = Conv(c2, c2, 1, 1)
-            self.bn = nn.GroupNorm(1, c2)  # applied to cat(cv2, cv3)
-            self.act = nn.ReLU()
+            if TYPE=='ZeroCost':
+                self.bn = nn.GroupNorm(1, c2)  # applied to cat(cv2, cv3)
+                self.act = nn.ReLU()
+            elif TYPE=='DNAS':
+                self.bn = nn.BatchNorm2d(c2)  # applied to cat(cv2, cv3)
+                self.act = Mish()
+            else:
+                raise ValueError(f'Invalid Type: {TYPE}')
+        
             self.m = nn.Sequential(*[Bottleneck(c_h, c_h, shortcut, g, e=1.0) for _ in range(n)])
         self.block_name = f'bottlecsp_num{n}_gamma{e}'
 
@@ -194,16 +220,30 @@ class BottleneckCSP2(nn.Module):
             self.cv1 = Conv(c1, c_, 1, 1)
             self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
             self.cv3 = Conv(2 * c_, c2, 1, 1)
-            self.bn = nn.GroupNorm(1, 2 * c_) 
-            self.act = nn.ReLU()
+            if TYPE=='ZeroCost':
+                self.bn = nn.GroupNorm(1, 2 * c_) 
+                self.act = nn.ReLU()
+            elif TYPE=='DNAS':
+                self.bn = nn.BatchNorm2d(2 * c_) 
+                self.act = Mish()
+            else:
+                raise ValueError(f'Invalid Type: {TYPE}')
+        
             self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
         elif self.search_type == 1:
             c_ = int(c2 * (e + 0.5))  # hidden channels
             self.cv1 = Conv(c1, c_, 1, 1)
             self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
             self.cv3 = Conv(2 * c_, c2, 1, 1)
-            self.bn = nn.GroupNorm(1, 2 * c_) 
-            self.act = nn.ReLU()
+            if TYPE=='ZeroCost':
+                self.bn = nn.GroupNorm(1, 2 * c_) 
+                self.act = nn.ReLU()
+            elif TYPE=='DNAS':
+                self.bn = nn.BatchNorm2d(2 * c_) 
+                self.act = Mish()
+            else:
+                raise ValueError(f'Invalid Type: {TYPE}')
+
             self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
         elif self.search_type == 2:
             c_  = int(c2)
@@ -317,8 +357,15 @@ class SPPCSP(nn.Module):
         self.m = nn.ModuleList([nn.MaxPool2d(kernel_size=x, stride=1, padding=x // 2) for x in k])
         self.cv5 = Conv(4 * c_, c_, 1, 1)
         self.cv6 = Conv(c_, c_, 3, 1)
-        self.bn = nn.GroupNorm(1, 2 * c_) 
-        self.act = nn.ReLU()
+        if TYPE=='ZeroCost':
+            self.bn = nn.GroupNorm(1, 2 * c_) 
+            self.act = nn.ReLU()
+        elif TYPE=='DNAS':
+            self.bn = nn.BatchNorm2d(2 * c_) 
+            self.act = Mish()
+        else:
+            raise ValueError(f'Invalid Type: {TYPE}')
+
         self.cv7 = Conv(2 * c_, c2, 1, 1)
         self.block_name = f'sppcsp'
 

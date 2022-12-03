@@ -1,5 +1,6 @@
 ChiaHui_YOLOv4
 backup
+__pycache__
 
 CreamOfTehCrop_ScaledYOLO/data/obj-st
 CreamOfTehCrop_ScaledYOLO/data/VOC2007
@@ -23,3 +24,4 @@ mish-cuda
 mish-cuda_old
 ScaledYOLOv4Old
 yolov5
+*.pyc

@@ -3,16 +3,30 @@
 # Written by Hao Du and Houwen Peng
 # email: haodu8-c@my.cityu.edu.hk and houwen.peng@microsoft.com
 
+from pathlib import Path
+import numpy as np
 import time, os
 import torchvision
 import torch.nn.functional as F
 import itertools
 import random
+from tqdm import tqdm
+from torch.cuda import amp
 from scipy.special import softmax
 from lib.utils.util import *
-from lib.utils.general import compute_loss
+from lib.utils.general import compute_loss, test, plot_images, is_parallel
 from lib.utils.kd_utils import compute_loss_KD
 from lib.utils.synflow import sum_arr_tensor
+
+def get_device_info():
+    print('--------------GPU Info -------------------')
+    t = torch.cuda.get_device_properties(0).total_memory
+    r = torch.cuda.memory_reserved(0)
+    a = torch.cuda.memory_allocated(0)
+    f = r-a  # free inside reserved
+    print(f'total    : {t/1e9:.2f}GB')
+    print(f'free     : {f/1e9:.2f}GB')
+    print(f'used     : {a/1e9:.2f}GB')
 
 def mlc_loss(arch_param):
     y_pred_neg = arch_param
@@ -20,8 +34,9 @@ def mlc_loss(arch_param):
     aux_loss = torch.mean(neg_loss)
     return aux_loss
 
-
-# supernet train function
+##############################
+# Train Zero-Cost Metrics
+##############################
 def train_epoch(epoch, model, loader, optimizer, loss_fn, prioritized_board, MetaMN, cfg, device, synflow_cache, task_flops, task_params, theta_optimizer=None,
                 est=None, logger=None, lr_scheduler=None, saver=None,
                 output_dir='', model_ema=None, local_rank=0, world_size=0, test_loader=None, arch_sampler=None, train_theta=False, wot_map=None):
@@ -300,6 +315,205 @@ def training_step(task_flops, task_params, device, model, random_cand, est, wot_
 
     return loss, loss_dict
     # return loss, overall_flops.mean(), overall_params.mean(), wot_loss
+
+
+
+##############################
+# Train Zero-Cost Metrics
+##############################
+def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task_params, 
+                     est=None, logger=None, local_rank=0, world_size=0, is_gumbel=False,
+                     prefix='', epoch=None, total_epoch=None, logdir='./', ema=None):
+    batch_time_m = AverageMeter()
+    data_time_m = AverageMeter()
+    training_losses_m = AverageMeter()
+    flops_losses_m = AverageMeter()
+    det_losses_m = AverageMeter()
+    
+    cache_hits = 0
+    iterations = len(dataloader)
+
+    end = time.time()
+    last_idx = len(dataloader) - 1
+    
+    batch_size = cfg.DATASET.BATCH_SIZE
+    alpha = 0.1        # for flops_loss
+    beta = 0.01         # for params_loss
+    gamma = 0.01        # for zero cost loss
+    omega = 0.01        # for depth loss
+    eta = 0.01          # for regularization loss, default 0.01
+    nw = max(3 * batch_size, 1e3)
+    is_ddp = is_parallel(model)
+    
+    temperature = model.module.temperature if is_ddp else model.temperature
+    mloss = torch.zeros(4, device=device)  # mean losses
+    
+    pbar = enumerate(dataloader)
+    if local_rank in [-1, 0]:
+        print(('%10s' * 14) % ('Epoch', 'gpu_mem', 'GIoU', 'obj', 'cls', 'total', 'targets', 'img_size', 'lr', 'moment', 'decay', 'temp', 'GFLOPS', 'f_loss'))
+        pbar = tqdm(pbar, total=iterations, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
+    
+    t_data = time.time()
+    # for iteration, (input, target) in enumerate(loader):
+    for iter_idx, (imgs, targets, paths, _) in pbar:
+        # if iter_idx == 10: break
+        t_data = time.time() - t_data 
+        ##################################################################
+        ### 1st. Train SuperNet Parameter
+        ##################################################################
+        # imgs = (batch=2, 3, height, width)
+        imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
+        
+        ni = iter_idx + iterations * (epoch- 1)
+        if ni <= nw:
+            import math
+            lf = lambda x: (((1 + math.cos(x * math.pi / total_epoch)) / 2) ** 1.0) * 0.8 + 0.2
+            xi = [0, nw]  # x interp
+            # model.gr = np.interp(ni, xi, [0.0, 1.0])  # giou loss ratio (obj_loss = 1.0 or giou)
+            accumulate = max(1, np.interp(ni, xi, [1, 1]).round())
+            for j, x in enumerate(optimizer.param_groups):
+                # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
+                if 'initial_lr' not in x:
+                    continue
+                w_lr = np.interp(ni, xi, [0.1 if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
+                
+                x['lr'] = w_lr
+                if 'momentum' in x:
+                    w_momentum = np.interp(ni, xi, [0.9, cfg.momentum])
+                    x['momentum'] = w_momentum
+            # print(f'w_lr: {w_lr}  w_momentum: {w_momentum}')
+        
+        arch_theta = torch.cat([theta().reshape(1, -1) for theta in (model.module.thetas if is_ddp else model.thetas )], dim=0)
+        if is_gumbel:
+            gumbel_prob = nn.functional.gumbel_softmax(arch_theta, temperature, dim=-1)
+        else:
+            gumbel_prob = nn.functional.softmax(arch_theta, dim=-1)
+            
+        # if (iter_idx + 1) % (iterations//3) == 0:
+        #     logger.info(f'{prefix} proc({local_rank}/{world_size}). Theta Distribtuion in 1st stage ' + str(arch_theta[0].detach().cpu().numpy()))
+        
+        t_infer=time.time()
+        pred = model.module(imgs, gumbel_prob) if is_ddp else model(imgs, gumbel_prob)
+        
+
+        det_loss, loss_items = compute_loss(pred[0][1], targets.to(device), model)  # scaled by batch_size
+        det_loss = det_loss[0]
+        
+        architecture_info = {
+            'arch_type': 'continuous',
+            'arch': gumbel_prob
+        }
+        flops = model.module.calculate_flops_new(architecture_info, est.flops_dict) if is_ddp else model.calculate_flops_new(architecture_info, est.flops_dict)
+        # params = model.module.calculate_params_new(architecture_info, est.params_dict)
+        # layers = model.module.calculate_layers_new(architecture_info)
+        
+        output_flops = flops.mean() / 1e3
+        # output_params = params.mean() 
+        # output_layers = layers.mean() 
+        
+        
+        squared_error_flops = (output_flops - task_flops) ** 2
+        # squared_error_params = (output_params - task_params) ** 2
+        # flops_loss = (output_flops - task_flops) ** 2
+        
+        flops_loss = squared_error_flops * alpha
+        # params_loss = squared_error_params * beta
+        # layers_loss = output_layers
+            
+        train_loss = det_loss + flops_loss
+        t_infer=time.time()-t_infer
+        
+        time_grad= time.time()
+        optimizer.zero_grad()
+        train_loss.backward()
+        optimizer.step()
+        if ema is not None:
+            ema.update(model)
+        
+        # Basic Info
+        for j, x in enumerate(optimizer.param_groups):
+            if 'momentum' in x:
+                break
+        print_lr = x['lr'] if 'lr' in x else 0
+        print_m = x['momentum'] if 'momentum' in x else 0
+        print_wdecay = x['weight_decay'] if 'weight_decay' in x else 0
+        
+        # Print
+        if local_rank in [-1, 0]:
+            ni = iter_idx
+            mloss = (mloss * iter_idx + loss_items) / (iter_idx + 1)  # update mean losses
+            mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
+            s = ('%10s' * 2 + '%10.4g' * 12) % (
+                '%g/%g' % (epoch, total_epoch), mem, *mloss, targets.shape[0], imgs.shape[-1], print_lr, print_m, print_wdecay, temperature, output_flops, squared_error_flops.detach().cpu())
+            pbar.set_description(s)
+            
+            # Plot
+            if ni < 3:
+                f = str(Path(logdir) / ('train_batch%g.jpg' % ni))  # filename
+                result = plot_images(images=imgs, targets=targets, paths=paths, fname=f)
+                # if tb_writer and result is not None:
+                #     tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
+                    # tb_writer.add_graph(model, imgs)  # add model to tensorboard
+    
+    
+    
+        t_data = time.time()
+    torch.cuda.synchronize()
+
+    # if iteration % (iterations // 2 -1) == 0:
+    #     distributions = softmax(model.module.thetas[0]().detach().cpu().numpy())
+    #     print('Distributions in 1 stage:', distributions)
+             
+    # if iteration % cfg.LOG_INTERVAL == 0:
+    #     lrl = [param_group['lr'] for param_group in optimizer.param_groups]
+    #     lr = sum(lrl) / len(lrl)
+        
+    #         # if cfg.SAVE_IMAGES and output_dir:
+    #         #     torchvision.utils.save_image(
+    #         #         input, os.path.join(
+    #         #             output_dir, 'train-batch-%d.jpg' %
+    #         #             iteration), padding=0, normalize=True)
+
+
+def log_message(logger, log_dict, prefix=''):
+    """
+    log_dict = {
+        'train': {
+            'epoch': epoch,
+            'iter_idx': iter_idx,
+            'max_iter': max_iter,
+        },
+        'loss': {
+            'total_loss': total_loss,
+            'flops_loss': flops_loss,
+            'layers_loss': layers_loss,
+        },
+        'temperature': temperature,
+        'data_time': data_time,
+    }
+    """
+    epoch=log_dict['train']['epoch']
+    iter_idx=log_dict['train']['iter_idx']
+    max_iter=log_dict['train']['max_iter']
+    
+    total_loss=log_dict['loss']['total_loss']
+    temp = log_dict['temperature']
+    data_time = log_dict['data_time']
+    
+
+    string = prefix + f" Epoch {epoch:<3d} ({iter_idx:4d}/{max_iter:4d}) : "
+    string += f" total_loss {total_loss:8.5f} |"
+    for key, item in log_dict['loss'].items():
+        string += f' {key} {item:8.5f} |'
+    
+    string += f" temperature {temp:6.4f} data_time {data_time:.3f}"
+    
+    logger.info(string)
+
+
+
+
+
 
 def arch_2_subnet(model, architecture):
     subnet = ''

@@ -74,23 +74,38 @@ def add_weight_decay_supernet(model, args, weight_decay=1e-5, skip_list=()):
     no_decay = []
     meta_layer_no_decay = []
     meta_layer_decay = []
+    other=[]
+    total_param = 0
     for name, param in model.named_parameters():
+        
         if not param.requires_grad or 'thetas' in name:
             continue  # frozen weights
-        if len(param.shape) == 1 or name.endswith(
-                ".bias") or name in skip_list:
-            if 'meta_layer' in name:
-                meta_layer_no_decay.append(param)
-            else:
-                no_decay.append(param)
+        total_param += param.numel()
+        if '.bias' in name:
+            no_decay.append(param)
+        elif '.weight' in name and '.bn' not in name:
+            decay.append(param)
         else:
-            if 'meta_layer' in name:
-                meta_layer_decay.append(param)
+            other.append(param)
+        # if len(param.shape) == 1 or name.endswith(".bias") or name in skip_list:
+        #     no_decay.append(param)
+        # else:
+        #     decay.append(param)
+    print(f'decay: {len(decay)}')
+    print(f'no_decay: {len(no_decay)}')
+    print(f'other: {len(other)}')
+    
+    
+    print(f'args.lr: { args.lr}')
+    print(f'total_param: {total_param/1e6:.2f}M      Exact Value: {total_param}')
+    
+    
+    
     return [
-        {'params': no_decay, 'weight_decay': 0., 'lr': args.lr},
-        {'params': decay, 'weight_decay': weight_decay, 'lr': args.lr},
-        {'params': meta_layer_no_decay, 'weight_decay': 0., 'lr': args.meta_lr},
-        {'params': meta_layer_decay, 'weight_decay': 0, 'lr': args.meta_lr},
+        {'params': other,                                       'lr': args.lr},
+        {'params': decay,       'weight_decay': weight_decay,   'lr': args.lr},
+        {'params': no_decay,    'weight_decay': weight_decay,   'lr': args.lr},
+        # {'params': other,                                       'lr': args.lr},
     ]
 
 
@@ -168,7 +183,8 @@ def check_tensor_in_list(atensor, alist):
 
 def create_optimizer_supernet(args, model, has_apex, filter_bias_and_bn=True):
     opt_lower = args.opt.lower()
-    thetas_lr = 0.01
+    print(f'create_optimizer_supernet || opt_lower: {opt_lower} || weight_decay: {args.weight_decay} || momentum: {args.momentum}')
+    thetas_lr = 0.005
     thetas_weight_decay = 5 * 1e-4
     thetas_params = model.thetas_main.parameters()
     # print(args)
@@ -193,11 +209,13 @@ def create_optimizer_supernet(args, model, has_apex, filter_bias_and_bn=True):
                                        lr=thetas_lr,
                                        weight_decay=thetas_weight_decay)
     if opt_lower == 'sgd' or opt_lower == 'nesterov':
+        # print('Model Optimizer Here !!', parameters)
         optimizer = optim.SGD(
             parameters,
             momentum=args.momentum,
             weight_decay=weight_decay,
             nesterov=True)
+        print(f'ck momentum: {args.momentum} weight_decay: {weight_decay} ')
     elif opt_lower == 'momentum':
         optimizer = optim.SGD(
             parameters,

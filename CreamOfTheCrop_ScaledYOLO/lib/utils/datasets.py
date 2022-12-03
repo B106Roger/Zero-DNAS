@@ -474,6 +474,19 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
     #     return self
 
     def __getitem__(self, index):
+        """
+        Params
+        ------
+        index: int
+        
+        Returns
+        -------
+        img:        np.uint8(3, height, width)
+        label_out:  np.float32(num_bboxes, 6)
+            ?? cls xywh, bboxes are normalized to [0,1]
+        image_path: str
+        shapes:     None
+        """
         if self.image_weights:
             index = self.indices[index]
 
@@ -553,6 +566,18 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         # Convert
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img)
+        # print( '[Roger] lib.utils.datasets.LoadImagesAndLabels img', img.shape, img.dtype)
+        # print( '[Roger] lib.utils.datasets.LoadImagesAndLabels labels', labels.shape, labels.dtype)
+        # print(f'[Roger] lib.utils.datasets.LoadImagesAndLabels self.img_files[{index}]', self.img_files[index])
+        # print( '[Roger] lib.utils.datasets.LoadImagesAndLabels shapes', shapes)
+        # print( '[Roger] lib.utils.datasets.LoadImagesAndLabels mosaic', self.mosaic)
+        
+        # print('labels_out', labels_out)
+        # if (len(labels_out) > 0) and ((labels_out[:, 1] >= 20).cpu().any()):
+        #     print('Number of class is inconsistent ', labels_out)
+        #     exit()
+        # elif len(labels_out) == 0:
+        #     print('no label in the image ')
 
         return torch.from_numpy(img), labels_out, self.img_files[index], shapes
 

@@ -32,7 +32,7 @@ except ImportError:
 
 # import models and training functions
 from lib.utils.flops_table import FlopsEst
-from lib.core.train import train_epoch, validate
+from lib.core.train import train_epoch, validate, train_epoch_dnas
 from lib.models.structures.supernet import gen_supernet
 from lib.models.PrioritizedBoard import PrioritizedBoard
 from lib.models.MetaMatchingNetwork import MetaMatchingNetwork
@@ -42,7 +42,7 @@ from lib.utils.util import parse_config_args, get_logger, \
 from lib.utils.datasets import create_dataloader
 from lib.utils.kd_utils import FeatureAdaptation
 from lib.models.blocks.yolo_blocks import Conv, ConvNP
-from lib.utils.general import check_img_size, labels_to_class_weights
+from lib.utils.general import check_img_size, labels_to_class_weights, is_parallel, compute_loss, test, ModelEMA
 from lib.utils.torch_utils import select_device
 from lib.utils.attentive_sampling import collect_samples
 from scipy.special import softmax
@@ -54,7 +54,7 @@ def config_backup(backup_path, args):
     shutil.copy(args.hyp,  os.path.join(backup_path, os.path.basename(args.hyp)))
     shutil.copy(args.data, os.path.join(backup_path, os.path.basename(args.data)))
     shutil.copy('lib/core/train.py', os.path.join(backup_path, 'core_train.py'))
-    shutil.copy('tools/train.py', os.path.join(backup_path, 'tools_train.py'))
+    shutil.copy('tools/train_dnas.py', os.path.join(backup_path, 'tools_train_dnas.py'))
     shutil.copy('lib/models/structures/supernet.py', os.path.join(backup_path, 'supernet.py'))
     shutil.copy('lib/models/blocks/yolo_blocks.py', os.path.join(backup_path, 'yolo_blocks.py'))
     shutil.copy('lib/models/builders/build_supernet.py', os.path.join(backup_path, 'build_supernet.py'))
@@ -65,13 +65,18 @@ def config_backup(backup_path, args):
         f.writelines(' '.join(sys.argv))
     
 task_dict = {
+    'DNAS-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},
+    'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},
+    'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},  
+    
     'NAS-SS': { 'GFLOPS': 5.7,  'PARAMS': 32.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS-S':  { 'GFLOPS': 7.0,  'PARAMS': 36.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS-M':  { 'GFLOPS': 9.0,  'PARAMS': 40.0, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS':    { 'GFLOPS': 11.9, 'PARAMS': 52.5, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS-L':  { 'GFLOPS': 16.5, 'PARAMS': 70.2, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
 }
-task_name = 'NAS-S'
+task_name = 'DNAS-25'
+
 TASK_FLOPS      = task_dict[task_name]['GFLOPS']     # e.g TASK_FLOPS  = 5  means 50 GFLOPs
 TASK_PARAMS     = task_dict[task_name]['PARAMS']     # e.g TASK_PARAMS = 32 means 32 million parameters.
 SEARCH_SPACES   = task_dict[task_name]['CHOICES']
@@ -96,8 +101,10 @@ def main():
         logger = None
 
     # initialize distributed parameters
-    # torch.cuda.set_device(args.local_rank)
     device = select_device(args.device, batch_size=cfg.DATASET.BATCH_SIZE)
+    cfg.NUM_GPU = torch.cuda.device_count()
+    cfg.WORKERS = torch.cuda.device_count()
+    
     # torch.distributed.init_process_group(backend='nccl', init_method='env://')
     args.world_size = 1
     args.global_rank = -1
@@ -126,7 +133,8 @@ def main():
         dil_conv=cfg.SUPERNET.DIL_CONV,
         slice=cfg.SUPERNET.SLICE,
         verbose=cfg.VERBOSE,
-        logger=logger)
+        logger=logger,
+        init_temp=5.0)
     
     # print(model)
     # initialize meta matching networks
@@ -135,9 +143,9 @@ def main():
     # number of choice blocks in supernet
     choice_num = model.choices # First bottlecsp
     if args.local_rank == 0:
-        logger.info('Supernet created, param count: %d', (
-            sum([m.numel() for m in model.parameters()])))
-        logger.info('resolution: %d', (resolution))
+        logger.info('Supernet created, param count: %.2f M', (
+            sum([m.numel() for m in model.parameters()]) / 1e6))
+        logger.info('resolution: %d', (cfg.DATASET.IMAGE_SIZE))
         logger.info('choice number: %d', (choice_num))
 
     #initialize prioritized board
@@ -150,29 +158,11 @@ def main():
         if isinstance(module, ConvNP):
             CBL_idx.append(idx)    
     # initialize flops look-up table
-    model_est = FlopsEst(model, input_shape=(2, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE))
+    model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE))
     if args.collect_samples > 0:
         collect_samples(args.collect_samples, model, prioritized_board, model_est)
         exit()
 
-    def counting_forward_hook(module, inp, out):
-        # try:
-        # if not module.visited_backwards:
-        #     return
-        if isinstance(inp, tuple):
-            inp = inp[0]
-        inp = inp.view(inp.size(0), -1)
-        x = (inp > 0).float()
-        K = x @ x.t()
-        K2 = (1.-x) @ (1.-x.t())
-        model.module.K = model.module.K + K.cpu().numpy() + K2.cpu().numpy()
-       
-    for name, module in model.named_modules():
-        if 'ReLU' in str(type(module)):
-            module.visited_backwards = False
-            #hooks[name] = module.register_forward_hook(counting_hook)
-            module.register_forward_hook(counting_forward_hook)
-            # module.register_backward_hook(counting_backward_hook)
     # optionally resume from a checkpoint
     optimizer_state = None
     resume_epoch = None
@@ -185,7 +175,7 @@ def main():
         print(f'Resuming training from: {args.resume_theta_training}')
         model.thetas_main = torch.load(args.resume_theta_training)
     optimizer, theta_optimizer = create_optimizer_supernet(cfg, model, USE_APEX)
-    
+    model.module.update_main() if is_parallel(model) else model.update_main()
     
     if optimizer_state is not None:
         optimizer.load_state_dict(optimizer_state['optimizer'])
@@ -208,7 +198,7 @@ def main():
                 'Install Apex or Torch >= 1.1 with Exception %s', exception)
     
     cuda = device.type != 'cpu'
-    if cuda and torch.cuda.device_count() > 1:
+    if cuda and torch.cuda.device_count() > 1 and args.local_rank != -1:
         model = torch.nn.DataParallel(model)
         print(f'Using {torch.cuda.device_count()} GPUs. device: {device}')
 
@@ -233,33 +223,42 @@ def main():
     with open(args.data) as f:
         data_dict = yaml.load(f, Loader=yaml.FullLoader)  # model dict
 
-    train_path = data_dict['train']
+    train_weight_path = data_dict['train_weight']
+    train_thetas_path = data_dict['train_thetas']
+
     test_path = data_dict['val']
     nc, names = (1, ['item']) if args.single_cls else (int(data_dict['nc']), data_dict['names'])  # number classes, names
     assert len(names) == nc, '%g names found for nc=%g dataset in %s' % (len(names), nc, args.data)  # check
     
     hyp['cls'] *= nc / 80.  # scale coco-tuned hyp['cls'] to current dataset
     
-    dataloader, dataset = create_dataloader(train_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
+    dataloader_weight, dataset_weight = create_dataloader(train_weight_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
                                             cache=args.cache_images, rect=args.rect,
                                             world_size=args.world_size)
-    mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
-    nb = len(dataloader)  # number of batches
+    dataloader_thetas, dataset_thetas = create_dataloader(train_thetas_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
+                                            cache=args.cache_images, rect=args.rect,
+                                            world_size=args.world_size)
+    mlc = np.concatenate(dataset_weight.labels, 0)[:, 0].max()  # max label class
+    nb = len(dataloader_weight)  # number of batches
     assert mlc < nc, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (mlc, nc, args.data, nc - 1)
 
+
+    model.nc = nc  # attach number of classes to model
+    model.hyp = hyp  # attach hyperparameters to model
+    model.gr = 1.0  # giou loss ratio (obj_loss = 1.0 or giou)
+    model.class_weights = labels_to_class_weights(dataset_weight.labels, nc).to(device)  # attach class weights
+    model.names = names
+
+    ema = ModelEMA(model) if args.local_rank in [-1, 0] else None
 
     # Testloader
     if args.local_rank in [-1, 0]:
         # ema.updates = start_epoch * nb // accumulate  # set EMA updates ***
         # local_rank is set to -1. Because only the first process is expected to do evaluation.
-        testloader = create_dataloader(test_path, imgsz_test, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=False,
+        if ema is not None:
+            ema.updates = start_epoch * nb // 1  # set EMA updates ***
+        testloader = create_dataloader(test_path, imgsz_test, 16, gs, args, hyp=hyp, augment=False,
                                        cache=args.cache_images, rect=True, local_rank=-1, world_size=args.world_size)[0]
-
-    model.nc = nc  # attach number of classes to model
-    model.hyp = hyp  # attach hyperparameters to model
-    model.gr = 1.0  # giou loss ratio (obj_loss = 1.0 or giou)
-    model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device)  # attach class weights
-    model.names = names
 
     # arch_sampler = ArchSampler('candidate_samples_8_6_4_2_025_05_075.txt', 1250, model_est, prioritized_board=prioritized_board)
     arch_sampler = None
@@ -267,11 +266,9 @@ def main():
         collect_synflows(args.collect_synflows, model, arch_sampler, device)
         exit()
     
-    train_loss_fn = nn.CrossEntropyLoss().cuda()
-    validate_loss_fn = train_loss_fn
-    # for i in range(100):
-    #     print(arch_sampler.sample_one_target_flops())
-    # exit()
+    train_loss_fn = compute_loss
+    validate_loss_fn = compute_loss
+    
     synflow_cache = {}
     # initialize training parameters
     eval_metric = cfg.EVAL_METRICS
@@ -283,52 +280,73 @@ def main():
         #     decreasing=decreasing)
 
     # training scheme
-    for batch_idx, (input, target, paths, _) in enumerate(dataloader):
-        target = target.to(device)
-        input = input.to(device, non_blocking=True).float() / 255.0
-        random_cand = [[0], [0], [0], [0], [0], [0], [0], [0], [0], [0], [0], [0, 0, 0], [0], [0], [0, 0, 0], [0], [0], [0], [0], [0], [0], [0], [0], [0], [0], [0]]
-        wot_map = model.module.calculate_wot(input, random_cand)
-        break
     try:
-        write_thetas(output_dir, model.module.thetas_main, -1)
-        for epoch in range(num_epochs):
-            print(f'current epoch: {epoch}')
-            train_metrics = train_epoch(epoch, model, dataloader, optimizer,
-                                        train_loss_fn, prioritized_board, MetaMN, cfg,
-                                        theta_optimizer=theta_optimizer,
-                                        synflow_cache=synflow_cache,
-                                        
-                                        task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
-                                        
-                                        lr_scheduler=lr_scheduler, saver=saver,
-                                        output_dir=output_dir, logger=logger,
-                                        est=model_est, 
-                                        local_rank=args.local_rank, 
-                                        device=device, 
-                                        world_size=args.world_size, 
-                                        test_loader=testloader,
-                                        arch_sampler=arch_sampler,
-                                        train_theta=True, wot_map=wot_map)
-            print('Writing thetas!')                            
-            write_thetas(output_dir, model.module.thetas_main, epoch)
-            torch.save(model.module.thetas_main, 'thetas_weights/thetas.pt')
-            print('Decreasing temperature!')
-            model.module.temperature = model.module.temperature * np.exp(-0.065)
-            # evaluate one epoch
-        write_final_thetas(output_dir, model.module.thetas_main)
-        best_candidate_idx, best_candidate_map = validate(model, testloader, validate_loss_fn,
-                                prioritized_board, cfg, device=device,
-                                local_rank=args.local_rank, logger=logger)
+        thetas_enable = True
+        if thetas_enable:
+            write_thetas(output_dir, model.module.thetas_main if is_parallel(model) else model.thetas_main, -1)
+        torch.save(model.state_dict(), os.path.join(output_dir, f'model_0.pt'))
+        for epoch in range(1, num_epochs+1):
+            model.train()
+            if epoch <= 40:
+                train_epoch_dnas(model, dataloader_weight, optimizer, cfg, device=device, 
+                                 task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
+                                 est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
+                                 epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=False, ema=ema
+                                )
+                if epoch == 40:
+                    torch.save(model.state_dict(), os.path.join(output_dir, f'model_40.pt'))
+            else:
+                train_epoch_dnas(model, dataloader_weight, optimizer, cfg, device=device, 
+                                task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
+                                est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
+                                epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema
+                                )
+                train_epoch_dnas(model, dataloader_thetas, theta_optimizer, cfg, device=device, 
+                                task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
+                                est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
+                                epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema
+                                )
+                
+                if thetas_enable:
+                    temp_decay = np.exp(-0.055)
+                    print('Decreasing temperature!')
+                    if is_parallel(model):
+                        model.module.temperature = model.module.temperature * temp_decay
+                    else:
+                        model.temperature = model.temperature * temp_decay
+                        
+            lr_scheduler.step()
+            print(f'Writing thetas!    Learning Rate: {lr_scheduler.get_last_lr()}')
+      
+            if thetas_enable:      
+                if is_parallel(model):
+                    write_thetas(output_dir, ema.ema.module.thetas_main, epoch)
+                    torch.save(ema.ema.module.thetas_main, 'thetas_weights/thetas.pt')
+                else:
+                    write_thetas(output_dir, ema.ema.thetas_main, epoch)
+                    torch.save(ema.ema.thetas_main, 'thetas_weights/thetas.pt')
 
-            # update_summary(epoch, train_metrics, eval_metrics, os.path.join(
-            #     output_dir, 'summary.csv'), write_header=best_metric is None)
+            if True:
+                _, _, map50, *other = test(
+                    data=args.data,
+                    batch_size=16,
+                    imgsz=416,
+                    save_json=False,
+                    model=ema.ema.module if hasattr(ema.ema, 'module') else ema.ema,
+                    single_cls=False,
+                    dataloader=testloader,
+                    save_dir=output_dir,
+                    logger=logger
+                )
+                print()
+            
+            
+        write_final_thetas(output_dir, ema.ema.module.thetas_main if is_parallel(model) else ema.ema.thetas_main)
+        # best_candidate_idx, best_candidate_map = validate(model, testloader, validate_loss_fn,
+        #                         prioritized_board, cfg, device=device,
+        #                         local_rank=args.local_rank, logger=logger)
 
-            # if saver is not None:
-            #     # save proper checkpoint with eval metric
-            #     save_metric = eval_metrics[eval_metric]
-            #     best_metric, best_epoch = saver.save_checkpoint(
-            #         model, optimizer, cfg,
-            #         epoch=epoch, metric=save_metric)
+
 
     except KeyboardInterrupt:
         pass
