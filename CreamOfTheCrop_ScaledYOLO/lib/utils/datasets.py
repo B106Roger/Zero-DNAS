@@ -482,8 +482,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         Returns
         -------
         img:        np.uint8(3, height, width)
-        label_out:  np.float32(num_bboxes, 6)
-            ?? cls xywh, bboxes are normalized to [0,1]
+        label_out:  np.float32(num_bboxes, 6) [batch_idx,cls,x,y,w,h], 
+            bboxes are normalized to [0,1], 
+            xy in xywh is the center of bbox.
         image_path: str
         shapes:     None
         """
@@ -540,6 +541,12 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             # if random.random() < 0.9:
             #     labels = cutout(img, labels)
 
+        # [Roger]
+        # If the number of bbox > 1
+        # then convert xyxy to xywh and normalize height and width to [0,1]
+        # labels=(number_of_bbox_in_a_img, 5) dtype=float32
+        # Note in the case of xywh, xy is the center of bbox
+        #      in the case of xyxy, xy1 is the top-left of the bbox while xy2 is the bottom-right of the bbox
         nL = len(labels)  # number of labels
         if nL:
             labels[:, 1:5] = xyxy2xywh(labels[:, 1:5])  # convert xyxy to xywh
@@ -559,26 +566,24 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 if nL:
                     labels[:, 1] = 1 - labels[:, 1]
 
+        # [Roger]
+        # If the number of bbox > 1
+        # then we further extend the (nL, 5) to (nL, 6)
+        # the last dimension is used to store the batch idx
+        # labels_out=(number_of_bbox_in_a_batch, 6)
         labels_out = torch.zeros((nL, 6))
         if nL:
             labels_out[:, 1:] = torch.from_numpy(labels)
 
+        # img=(3,h,w), dtype=uint8
         # Convert
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img)
-        # print( '[Roger] lib.utils.datasets.LoadImagesAndLabels img', img.shape, img.dtype)
-        # print( '[Roger] lib.utils.datasets.LoadImagesAndLabels labels', labels.shape, labels.dtype)
-        # print(f'[Roger] lib.utils.datasets.LoadImagesAndLabels self.img_files[{index}]', self.img_files[index])
-        # print( '[Roger] lib.utils.datasets.LoadImagesAndLabels shapes', shapes)
-        # print( '[Roger] lib.utils.datasets.LoadImagesAndLabels mosaic', self.mosaic)
         
-        # print('labels_out', labels_out)
-        # if (len(labels_out) > 0) and ((labels_out[:, 1] >= 20).cpu().any()):
-        #     print('Number of class is inconsistent ', labels_out)
-        #     exit()
-        # elif len(labels_out) == 0:
-        #     print('no label in the image ')
-
+        # print( '[Roger] lib.utils.datasets.LoadImagesAndLabels labels', labels[:, 0], labels.dtype)
+        # print(f'[Roger] lib.utils.datasets.LoadImagesAndLabels self.img_files[{index}]', self.img_files[index]) # a string for image path
+        # print( '[Roger] lib.utils.datasets.LoadImagesAndLabels shapes', shapes)       # shapes=None
+        # print( '[Roger] lib.utils.datasets.LoadImagesAndLabels mosaic', self.mosaic)  # self.mosaic=True
         return torch.from_numpy(img), labels_out, self.img_files[index], shapes
 
     @staticmethod

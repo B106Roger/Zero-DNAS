@@ -441,12 +441,12 @@ class BCEBlurWithLogitsLoss(nn.Module):
         loss *= alpha_factor
         return loss.mean()
 
-def compute_loss(p, targets, model):  # predictions, targets, model
+def compute_loss(p, targets, model, logger=None):  # predictions, targets, model
     device = targets.device
     # print('targets:', targets.shape)
     # print([pr.shape for pr in p]) 
     lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
-    tcls, tbox, indices, anchors = build_targets(p, targets, model)  # targets
+    tcls, tbox, indices, anchors = build_targets(p, targets, model, logger)  # targets
     # tcls = [torch.tensor(num_of_all_obj_across_batch,) ... number of fpn]
     # tbox = [torch.tensor(num_of_all_obj_across_batch, 4) ... number of fpn]
     # indices = [element ... number of fpn]
@@ -495,7 +495,7 @@ def compute_loss(p, targets, model):  # predictions, targets, model
                 t = torch.full_like(ps[:, 5:], cn, device=device)  # targets
                 t[range(n), tcls[i]] = cp
                 lcls += BCEcls(ps[:, 5:], t)  # BCE
-
+          
             # Append targets to text file
             # with open('targets.txt', 'a') as file:
             #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
@@ -510,14 +510,70 @@ def compute_loss(p, targets, model):  # predictions, targets, model
     loss = lbox + lobj + lcls
     return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
 
+def compute_sensitive_loss(p, p_aug, targets, masks):
+    """
+    Parameters
+    ----------
+    p: model prediction from normal image
+        [(batch, num_of_anchor, fpn_h, fpn_w, 4+1+cls) ......]
+    p_aug: model prediction from normal image
+        [(batch, num_of_anchor, fpn_h, fpn_w, 4+1+cls) ......]
+    targets:
+        not in used parameter
+    masks: foreground mask
+        [(batch, 1, fpn_h, fpn_w, 1) ......]
 
-def build_targets(p, targets, model):
+    Returns
+    -------
+    sensitive : torch.tensor, (1,)
+    loss_item : torch.tensor, (3,) => [fore_sensitive, back_sensitive, sensitive]
+
+    """
+    fore_sensitive = 0
+    back_sensitive = 0
+    for (pi, pi_aug, mask) in zip(p, p_aug, masks):
+        mask =  mask.unsqueeze(-1)
+        pos_mask = mask
+        neg_mask = 1-mask
+        pix_count = mask.shape[2] * mask.shape[3]
+        # [Roger]
+        # pos_ratio = neg_ratio = (2,)
+        pos_cnt   = pos_mask.sum((1,2,3,4))
+        neg_cnt   = neg_mask.sum((1,2,3,4))
+        pos_ratio = torch.nan_to_num(1.0 / pos_cnt)
+        neg_ratio = torch.nan_to_num(1.0 / neg_cnt)
+        # [Roger]
+        # mse_diff = (batch, num_of_anchor, fpn_h, fpn_w, 4+1+num_of_cls)
+        mse_diff = torch.abs(pi - pi_aug)
+        
+        fore_sensitive += - (mse_diff * pos_mask).sum((1,2,3,4)) * pos_ratio
+        back_sensitive +=   (mse_diff * neg_mask).sum((1,2,3,4)) * neg_ratio
+
+    fore_sensitive = fore_sensitive.mean()
+    back_sensitive = back_sensitive.mean()
+    sensitive = fore_sensitive + back_sensitive
+    
+    return sensitive, torch.tensor((
+        fore_sensitive.clone(), 
+        back_sensitive.clone(), 
+        sensitive.clone(), 
+    )).detach()
+
+def build_targets(p, targets, model, logger=None):
     # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
     det = model.module.yolo_detector if is_parallel(model) else model.yolo_detector  # Detect() module
     na, nt = det.na, targets.shape[0]  # number of anchors, targets
     tcls, tbox, indices, anch = [], [], [], []
     gain = torch.ones(7, device=targets.device)  # normalized to gridspace gain
     ai = torch.arange(na, device=targets.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
+    
+    # ai=(num_of_anchor, num_of_bbox)
+    # [Roger]
+    # input
+    #   ai[:, :, None]=(num_of_anchor, num_of_bbox, 1)
+    #   targets.repeat(na, 1, 1)=(num_of_anchor, num_of_bbox, 6)
+    # output
+    #   targets=(num_of_anchor, num_of_bbox, 7)
     targets = torch.cat((targets.repeat(na, 1, 1), ai[:, :, None]), 2)  # append anchor indices
 
     g = 0.5  # bias
@@ -525,28 +581,66 @@ def build_targets(p, targets, model):
                         [1, 0], [0, 1], [-1, 0], [0, -1],  # j,k,l,m
                         # [1, 1], [1, -1], [-1, 1], [-1, -1],  # jk,jm,lk,lm
                         ], device=targets.device).float() * g  # offsets
+    # [Roger]
+    # na, number of anchor, should always be 3
+    # nt, number of target,
+    # ai=(num_of_anchor, num_of_target), float32
+    # off=(5,2) 
 
     for i in range(det.nl):
+        # [Roger]
+        # p[i] = (batch, num_of_anchor, fpn_h, fpn_w, num_cls+5)
         anchors = det.anchors[i]
         gain[2:6] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
 
-        # Match targets to anchors
-        t = targets * gain
+        # Match targets to anchors      # [Roger]
+        t = targets * gain              # targets=(num_of_anchor, num_of_bbox, 7) 7=>[batch,cls,xywh,anchor_idx]
+                                        # gain   =[1,1,fpn_w, fpn_h, fpn_w, fpn_h, 1]
+        
+        # [Roger]
+        # anchor=(3,2), float32, 3 anchor per fpn, xy
+        # gain=(7,), float32, [1, 1, fpn_w, fpn_h, fpn_w, fpn_h, 1]
+        # t=(3, num_of_targets, 7), float32 => the intemediate 4 value is at the grid coordinate [0, fpn_size]
+        
         if nt:
             # Matches
             r = t[:, :, 4:6] / anchors[:, None]  # wh ratio
             j = torch.max(r, 1. / r).max(2)[0] < model.hyp['anchor_t']  # compare
             # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
             t = t[j]  # filter
-
-            # Offsets
+        
+            # [Roger]
+            # r=(num_of_anchor, num_of_bbox, 2), float32, the scale ratio for anchor to reach the wh of bbox
+            # j=(num_of_anchor, num_of_bbox),    float32, choose which anchor is most suitable for the target
+            # model.hyp["anchor_t"]=4.0
+            # t=(num_of_bbox, 7) 7=>(batch, cls, xywh, anchor_idx)
+            
+            # [Roger]
+            # gxy=(num_of_bbox, 2) coordinate for grid in xy
+            # gxi=(num_of_bbox, 2) coordinate for grid in xy but in reverse order.
+            # j=(5, num_of_bbox)
+            # t=(increase_num_of_bbox, 2)
+            # offsets=(increase_num_of_bbox, 2)
             gxy = t[:, 2:4]  # grid xy
             gxi = gain[[2, 3]] - gxy  # inverse
-            j, k = ((gxy % 1. < g) & (gxy > 1.)).T
-            l, m = ((gxi % 1. < g) & (gxi > 1.)).T
+            # [Roger]
+            # j = k = l = m = (1, increase_num_of_bbox)
+            j, k = ((gxy % 1. < g) & (gxy > 1.)).T # g=0.5, j=>index for y,         k=>index for x
+            l, m = ((gxi % 1. < g) & (gxi > 1.)).T # g=0.5, l=>index for inverse y, m=>index for inverse x
+            
+            # [Roger]
+            # j=(5,increase_num_of_bbox)
             j = torch.stack((torch.ones_like(j), j, k, l, m))
+            # [Roger]
+            # simply increase the number of trainig sample, but have no idea why it do that @@?
+            # increase the left-right-top-bot pixel for training, at most 5 pixel for training single bbox
+            # t=(increase_num_of_bbox, 7)
+            # t.repeat((5, 1, 1))=(5, increase_num_of_bbox, 7)
             t = t.repeat((5, 1, 1))[j]
+            print('[Roger] t', t[:20])
             offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
+            # offsets => (num_of_targets, 2) => contain one of coordinate
+            # (0.0, 0.0), (0.5, 0.0), (0.0, 0.5), (0.0, -0.5), (-0.5, 0.0)
         else:
             t = targets[0]
             offsets = 0
@@ -560,13 +654,90 @@ def build_targets(p, targets, model):
 
         # Append
         a = t[:, 6].long()  # anchor indices
+        # [Roger]
+        # gain[3],gain[2] => fpn size, fpn size
+        # gigj => the coordiante in fpn_size coordinate
+        # gxy  => gxy 
         indices.append((b, a, gj.clamp_(0, gain[3]), gi.clamp_(0, gain[2])))  # image, anchor, grid indices
         tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
         anch.append(anchors[a])  # anchors
         tcls.append(c)  # class
-
     return tcls, tbox, indices, anch
 
+def build_foreground_mask(mask_sizes, batch_size, targets, model):
+    """
+    mask_sizes:
+    targets: (num_of_bbox, 6)
+    """
+    # mask_sizes = [torch.tensor(fpn.shape[2:4]) for fpn in p]
+    # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
+    det = model.module.yolo_detector if is_parallel(model) else model.yolo_detector  # Detect() module
+    na, nt = det.na, targets.shape[0]  # number of anchors, targets
+    tcls, tbox, indices, anch = [], [], [], []
+    gain = torch.ones(7, device=targets.device)  # normalized to gridspace gain
+    ai = torch.arange(na, device=targets.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
+    
+    
+
+    
+    # [Roger]
+    # input
+    #   ai            =(num_of_anchor, num_of_bbox)
+    #   ai[:, :, None]=(num_of_anchor, num_of_bbox, 1)
+    #   targets.repeat(na, 1, 1)=(num_of_anchor, num_of_bbox, 6)
+    # output
+    #   targets=(num_of_anchor, num_of_bbox, 7)
+    targets = torch.cat((targets.repeat(na, 1, 1), ai[:, :, None]), 2)  # append anchor indices
+
+    g = 0.5  # bias
+    off = torch.tensor([[0, 0],
+                        [1, 0], [0, 1], [-1, 0], [0, -1],  # j,k,l,m
+                        # [1, 1], [1, -1], [-1, 1], [-1, -1],  # jk,jm,lk,lm
+                        ], device=targets.device).float() * g  # offsets
+    # [Roger]
+    # na, number of anchor, should always be 3
+    # nt, number of target,
+    # ai=(num_of_anchor, num_of_target), float32
+    # off=(5,2) 
+    masks = []
+    for i, mask_size in enumerate(mask_sizes):
+        # [Roger]
+        # p[i] = (batch, num_of_anchor, fpn_h, fpn_w, num_cls+5)
+        anchors = det.anchors[i]
+        gain[2:6] = torch.tensor(mask_size.clone().detach().requires_grad_(False))[[1,0,1,0]]  # xyxy gain
+        grid_y, grid_x = torch.meshgrid(torch.arange(mask_size[0]), torch.arange(mask_size[1]))
+        mask = torch.zeros(batch_size, 1, mask_size[0], mask_size[1]).cuda()
+
+        # Match targets to anchors      # [Roger]
+        t = targets * gain              # targets=(num_of_anchor, num_of_bbox, 7) 7=>[batch,cls,xywh,anchor_idx]
+                                        # gain   =[1,1,fpn_w, fpn_h, fpn_w, fpn_h, 1]
+        
+        
+        # [Roger]
+        # anchor=(3,2), float32, 3 anchor per fpn, xy
+        # gain=(7,), float32, [1, 1, fpn_w, fpn_h, fpn_w, fpn_h, 1]
+        # t=(3, num_of_targets, 7), float32 => the intemediate 4 value is at the grid coordinate [0, fpn_size]
+        
+        if nt:
+            # Matches
+            r = t[:, :, 4:6] / anchors[:, None]  # wh ratio
+            j = torch.max(r, 1. / r).max(2)[0] < model.hyp['anchor_t']  # compare
+            # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
+            t = t[j]  # filter
+            
+            xy_size = torch.tensor([[mask_size[1], mask_size[0]]]).cuda()
+            # t_start = t_end = (t, 2)
+            t_start = (t[:, 2:4] - t[:, 4:6] / 2)
+            t_end   = (t[:, 2:4] + t[:, 4:6] / 2)
+            
+            # t_start = t_end = (t, 5) => [batch, x1, y1, x2, y2]
+            t_infos = torch.cat([t[:, 0:1], t_start, t_end], -1).int()
+
+            for t_info in t_infos:
+                mask[t_info[0], 0, t_info[2]:t_info[4], t_info[1]:t_info[3]] = 1
+                
+        masks.append(mask)
+    return masks
 
 def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, classes=None, agnostic=False):
     """Performs Non-Maximum Suppression (NMS) on inference results

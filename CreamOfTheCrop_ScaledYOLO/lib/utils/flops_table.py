@@ -32,7 +32,7 @@ class FlopsEst(object):
         else:
 
         # Compute Stem FLOPs
-            print('Computing stem FLOPs...')
+            print('Computing stem FLOPs. Resolution ', input_shape)
             flops_dynamic = 0
             params_dynamic = 0
             
@@ -61,7 +61,7 @@ class FlopsEst(object):
                     flops_list = []
                     param_list = []
                     for choice_id, choice in enumerate(module):
-                        print(f'block {block_id} | module_id {module_id} | choice_id {choice_id}')
+                        print(f'block {block_id} | module_id {module_id} | choice_id {choice_id}', end='  ')
                         choice_id = str(choice_id)
                         if choice.get_block_name() == 'concat':
                             out_chs = choice.block_arguments['out_chs']
@@ -111,9 +111,9 @@ class FlopsEst(object):
                                 print_per_layer_stat=False
                             )
                             algorithm_type = get_algorithm_type()
-                            if algorithm_type == 'ZeroCost':
+                            if algorithm_type == 'ZeroDNAS_Egor':
                                 flops = macs
-                            elif algorithm_type == 'DNAS':
+                            elif algorithm_type == 'DNAS' or algorithm_type == 'ZeroCost':
                                 flops = macs * 2
                             else:
                                 raise ValueError(f"Invalid algorithm type {algorithm_type}")

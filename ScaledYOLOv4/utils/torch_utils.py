@@ -124,7 +124,7 @@ def fuse_conv_and_bn(conv, bn):
         return fusedconv
 
 
-def model_info(model, verbose=False):
+def model_info(model, verbose=False, resolution = (224, 224)):
     # Plots a line-by-line description of a PyTorch model
     n_p = sum(x.numel() for x in model.parameters())  # number parameters
     n_g = sum(x.numel() for x in model.parameters() if x.requires_grad)  # number gradients
@@ -137,7 +137,6 @@ def model_info(model, verbose=False):
 
     try:  # FLOPS
         from thop import profile
-        resolution = (416, 416)
         flops = profile(deepcopy(model), inputs=(torch.zeros(1, 3, resolution[0], resolution[1]),), verbose=False)[0] / 1E9 * 2
         fs = f', {flops:.1f} GFLOPS  Resolution: {resolution}'   # 640x640 FLOPS
     except:

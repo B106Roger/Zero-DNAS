@@ -5,12 +5,12 @@ import torch.nn as nn
 from mish_cuda import MishCuda as Mish
 from lib.utils.synflow import synflow, sum_arr
 
-TYPE = None # ZeroCost or DNAS
+TYPE = None # ZeroDNAS_Egor or DNAS or ZeroCost
 
 def set_algorithm_type(type_literal):
     """
     Option
-        ZeroCost:
+        ZeroDNAS_Egor:
             1. use GroupNormalization to replace all the BatchNormalization
             2. use MACS as the flop constraint [FLOPS = MAC * 2]
             3. use 'efficientnet_init_weights' to initialize yolo-detector
@@ -18,15 +18,19 @@ def set_algorithm_type(type_literal):
             1. use BatchNormalization
             2. use 'Real' flop constraint [FLOPS = MAC * 2]
             3. use 'the initialize method from ScaledYOLO source code'
+        ZeroCost:
+            1. use GroupNormalization to replace all the BatchNormalization
+            2. use 'Real' flop constraint [FLOPS = MAC * 2]
+            3. use 'the initialize method from ScaledYOLO source code'
     """
     global TYPE
-    if type_literal not in ['DNAS', 'ZeroCost']:
+    if type_literal not in ['DNAS', 'ZeroDNAS_Egor', 'ZeroCost']:
         raise ValueError(f"Invalid Search Algorithm {type_literal}")    
     TYPE = type_literal
     
 def get_algorithm_type():
     global TYPE
-    if TYPE not in ['DNAS', 'ZeroCost']:
+    if TYPE not in ['DNAS', 'ZeroDNAS_Egor', 'ZeroCost']:
         raise ValueError(f"Didn't Initialize the TYPE parameter.")    
     return TYPE    
 
@@ -41,7 +45,7 @@ class Conv(nn.Module):
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
         super(Conv, self).__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
-        if TYPE=='ZeroCost':
+        if TYPE=='ZeroDNAS_Egor' or TYPE=='ZeroCost':
             self.bn = nn.GroupNorm(1, c2)
             self.act = nn.ReLU() if act else nn.Identity()
         elif TYPE=='DNAS':
@@ -66,7 +70,7 @@ class ConvNP(nn.Module):
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
         super(ConvNP, self).__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
-        if TYPE=='ZeroCost':
+        if TYPE=='ZeroDNAS_Egor' or TYPE=='ZeroCost':
             self.bn = nn.GroupNorm(1, c2)
             self.act = nn.ReLU() if act else nn.Identity()
         elif TYPE=='DNAS':
@@ -130,7 +134,7 @@ class BottleneckCSP(nn.Module):
             self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
             self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
             self.cv4 = Conv(2 * c_, c2, 1, 1)
-            if TYPE=='ZeroCost':
+            if TYPE=='ZeroDNAS_Egor' or TYPE=='ZeroCost':
                 self.bn = nn.GroupNorm(1, 2 * c_)  # applied to cat(cv2, cv3)
                 self.act = nn.ReLU()
             elif TYPE=='DNAS':
@@ -147,7 +151,7 @@ class BottleneckCSP(nn.Module):
             self.cv2 = nn.Conv2d(c1, c_s, 1, 1, bias=False)
             self.cv3 = nn.Conv2d(c_h, c_h, 1, 1, bias=False)
             self.cv4 = Conv(c2, c2, 1, 1)
-            if TYPE=='ZeroCost':
+            if TYPE=='ZeroDNAS_Egor' or TYPE=='ZeroCost':
                 self.bn = nn.GroupNorm(1, c2)  # applied to cat(cv2, cv3)
                 self.act = nn.ReLU()
             elif TYPE=='DNAS':
@@ -246,7 +250,7 @@ class BottleneckCSP2(nn.Module):
             self.cv1 = Conv(c1, c_, 1, 1)
             self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
             self.cv3 = Conv(2 * c_, c2, 1, 1)
-            if TYPE=='ZeroCost':
+            if TYPE=='ZeroDNAS_Egor' or TYPE=='ZeroCost':
                 self.bn = nn.GroupNorm(1, 2 * c_) 
                 self.act = nn.ReLU()
             elif TYPE=='DNAS':
@@ -261,7 +265,7 @@ class BottleneckCSP2(nn.Module):
             self.cv1 = Conv(c1, c_, 1, 1)
             self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
             self.cv3 = Conv(2 * c_, c2, 1, 1)
-            if TYPE=='ZeroCost':
+            if TYPE=='ZeroDNAS_Egor' or TYPE=='ZeroCost':
                 self.bn = nn.GroupNorm(1, 2 * c_) 
                 self.act = nn.ReLU()
             elif TYPE=='DNAS':
@@ -387,7 +391,7 @@ class SPPCSP(nn.Module):
         self.m = nn.ModuleList([nn.MaxPool2d(kernel_size=x, stride=1, padding=x // 2) for x in k])
         self.cv5 = Conv(4 * c_, c_, 1, 1)
         self.cv6 = Conv(c_, c_, 3, 1)
-        if TYPE=='ZeroCost':
+        if TYPE=='ZeroDNAS_Egor' or TYPE=='ZeroCost':
             self.bn = nn.GroupNorm(1, 2 * c_) 
             self.act = nn.ReLU()
         elif TYPE=='DNAS':

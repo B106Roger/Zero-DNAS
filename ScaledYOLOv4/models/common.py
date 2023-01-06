@@ -55,6 +55,7 @@ class BottleneckCSP(nn.Module):
         self.search_type = 0
         if self.search_type == 0:
             c_ = int(c2 * e)  # hidden channels
+            print(f'[Roger] Search Type1 e: {e} c2: {c2} c_: {c_}')
             self.cv1 = Conv(c1, c_, 1, 1)
             self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
             self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
@@ -94,6 +95,7 @@ class BottleneckCSP2(nn.Module):
             self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
         elif self.search_type==1:
             c_ = int(c2 * (e + 0.5))  # hidden channels
+            print(f'[Roger] Search Type1 e: {e} c2: {c2} c_: {c_}')
             self.cv1 = Conv(c1, c_, 1, 1)
             self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
             self.cv3 = Conv(2 * c_, c2, 1, 1)

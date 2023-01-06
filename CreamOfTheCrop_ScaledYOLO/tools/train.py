@@ -71,7 +71,8 @@ task_dict = {
     'NAS':    { 'GFLOPS': 11.9, 'PARAMS': 52.5, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS-L':  { 'GFLOPS': 16.5, 'PARAMS': 70.2, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
 }
-task_name = 'NAS'
+task_name = 'NAS-M'
+FLOP_RESOLUTION = None                               # Later would be initialize
 TASK_FLOPS      = task_dict[task_name]['GFLOPS']     # e.g TASK_FLOPS  = 5  means 50 GFLOPs
 TASK_PARAMS     = task_dict[task_name]['PARAMS']     # e.g TASK_PARAMS = 32 means 32 million parameters.
 SEARCH_SPACES   = task_dict[task_name]['CHOICES']
@@ -81,6 +82,7 @@ def main():
     # output_dir = os.path.join(cfg.SAVE_PATH,
     #                           "{}-{}".format(datetime.now().strftime('%m%d-%H:%M:%S'),
     #                                          cfg.MODEL))
+    FLOP_RESOLUTION = (None, 3, cfg.search_resolution, cfg.search_resolution)
     output_dir = os.path.join(cfg.SAVE_PATH, cfg.exp_name)
     output_bakup_dir = os.path.join(output_dir, 'config')
     config_backup(output_bakup_dir, args)
@@ -106,6 +108,7 @@ def main():
             'Training on Process %d with %d GPUs.',
                 args.local_rank, cfg.NUM_GPU)
 
+    logger.info(f'TASK NAME {task_name}')
     # fix random seeds
     torch.manual_seed(cfg.SEED)
     torch.cuda.manual_seed_all(cfg.SEED)
@@ -113,7 +116,7 @@ def main():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     # set block static argument
-    set_algorithm_type('ZeroCost')
+    set_algorithm_type('ZeroDNAS_Egor')
     BottleneckCSP.set_search_space(cfg.search_space.BOTTLENECK_CSP)
     BottleneckCSP2.set_search_space(cfg.search_space.BOTTLENECK_CSP2)
     
@@ -156,7 +159,7 @@ def main():
     # initialize flops look-up table. 
     # It's well-known that "MACS * 2 = FLOPs"
     # Note that the batch should be 2, because the origin code is used to calculate MACS 
-    model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE))
+    model_est = FlopsEst(model, input_shape=FLOP_RESOLUTION)
     if args.collect_samples > 0:
         collect_samples(args.collect_samples, model, prioritized_board, model_est)
         exit()

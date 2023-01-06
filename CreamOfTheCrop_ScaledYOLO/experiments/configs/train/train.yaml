@@ -15,15 +15,15 @@ EVAL_METRICS: 'prec1'
 TTA: 0
 LOCAL_RANK: -1
 
+##############################################################################
 # Extra Option For Experiment
 BETA_REG: False
-
-
 DATASET:
   NUM_CLASSES: 3
   IMAGE_SIZE: 288 # image patch size
   INTERPOLATION: 'bilinear' # Image resize interpolation type
   BATCH_SIZE: 2 # batch size
+SEARCH_RESOLUTION: 288 # calculate the flops of each block
 
 NET:
   GP: 'avg'
@@ -50,7 +50,7 @@ THETA_OPTIMIZER:
 
 EPOCHS: 40
 META_LR: 1e-4
-
+##############################################################################
 BATCHNORM:
   SYNC_BN: False
 

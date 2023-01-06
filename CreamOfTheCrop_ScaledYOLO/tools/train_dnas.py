@@ -76,7 +76,7 @@ task_dict = {
     'NAS-L':  { 'GFLOPS': 16.5, 'PARAMS': 70.2, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
 }
 task_name = 'DNAS-25'
-
+FLOP_RESOLUTION = None
 TASK_FLOPS      = task_dict[task_name]['GFLOPS']     # e.g TASK_FLOPS  = 5  means 50 GFLOPs
 TASK_PARAMS     = task_dict[task_name]['PARAMS']     # e.g TASK_PARAMS = 32 means 32 million parameters.
 SEARCH_SPACES   = task_dict[task_name]['CHOICES']
@@ -86,6 +86,7 @@ def main():
     # output_dir = os.path.join(cfg.SAVE_PATH,
     #                           "{}-{}".format(datetime.now().strftime('%m%d-%H:%M:%S'),
     #                                          cfg.MODEL))
+    FLOP_RESOLUTION = (None, 3, cfg.search_resolution, cfg.search_resolution)
     output_dir = os.path.join(cfg.SAVE_PATH, cfg.exp_name)
     output_bakup_dir = os.path.join(output_dir, 'config')
     config_backup(output_bakup_dir, args)

@@ -23,7 +23,7 @@ from timm.models.layers import SelectAdaptivePool2d
 from timm.models.layers.activations import hard_sigmoid
 from lib.utils.kd_utils import FeatureAdaptation
 from lib.utils.synflow import synflow, sum_arr, sum_arr_tensor
-
+import math
 class Theta(nn.Module):
     def __init__(self, parameters):
         super(Theta, self).__init__()
@@ -152,10 +152,10 @@ class SuperNet(nn.Module):
         
         # [Roger]
         algorithm_type = get_algorithm_type()
-        if algorithm_type == 'ZeroCost':
+        if algorithm_type == 'ZeroDNAS_Egor':
             efficientnet_init_weights(self)
-        elif algorithm_type == 'DNAS':
-            self._initialize_weights()
+        elif algorithm_type == 'DNAS' or algorithm_type =='ZeroCost':
+            self._initialize_weights(True)
         else:
             raise ValueError(f"Invalid algorithm type {algorithm_type}")
 
@@ -494,7 +494,7 @@ class SuperNet(nn.Module):
             block_id += 1
         return overall_layers
 
-    def _initialize_weights(self):
+    def _initialize_detector_bias(self):
         # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1.
         m = self.yolo_detector  # Detect() module
         cf=None
@@ -504,11 +504,30 @@ class SuperNet(nn.Module):
                 b[:, 4] += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
                 b[:, 5:] += math.log(0.6 / (m.nc - 0.99)) if cf is None else torch.log(cf / cf.sum())  # cls
             mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
+
+    def _initialize_weights(self, first=False):
+        # # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1.
+        # m = self.yolo_detector  # Detect() module
+        # cf=None
+        # for mi, s in zip(m.m, m.stride):  # from
+        #     b = mi.bias.view(m.na, -1)  # conv.bias(255) to (3,85)
+        #     with torch.no_grad():
+        #         b[:, 4] += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
+        #         b[:, 5:] += math.log(0.6 / (m.nc - 0.99)) if cf is None else torch.log(cf / cf.sum())  # cls
+        #     mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
+        self._initialize_detector_bias()
         # Initialize Backbone
         for m in self.modules():
             t = type(m)
             if t is nn.Conv2d:
-                pass  # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if first: continue
+                # pass  # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                torch.nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
+                if m.bias is not None:
+                    fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(m.weight)
+                    if fan_in != 0:
+                        bound = 1 / math.sqrt(fan_in)
+                        torch.nn.init.uniform_(m.bias, -bound, bound)
             elif t is nn.BatchNorm2d:
                 m.eps = 1e-3
                 m.momentum = 0.03
@@ -526,6 +545,10 @@ class SuperNet(nn.Module):
         #     elif isinstance(m, nn.Linear):
         #         nn.init.normal_(m.weight, 0, 0.01)
         #         nn.init.constant_(m.bias, 0)
+
+    def _initialize_efficientnet(self):
+        efficientnet_init_weights(self)
+        self._initialize_detector_bias()
 
     def calculate_synflow(self, x, architecture, overall_synflow, first_run=False, calc_metric=False):
         y = []
@@ -815,6 +838,13 @@ class SuperNet(nn.Module):
     #########################################################################
     ######################## WeiJie Implementation ##########################
     def calculate_flops_new(self, architecture_info, flops_dict):
+        """
+        Params
+        ------
+        Returns
+        -------
+        overall_flops: torch.tensor(1,), M-FLOPS
+        """
         architecture = architecture_info['arch']
         architecture_type = architecture_info['arch_type']
         
@@ -864,7 +894,14 @@ class SuperNet(nn.Module):
         overall_flops += flops_dict['flops_fixed']
         return overall_flops
     
-    def calculate_params_new(self, architecture, params_dict):
+    def calculate_params_new(self, architecture_info, params_dict):
+        """
+        Params
+        ------
+        Returns
+        -------
+        overall_params: torch.tensor(1,), M-PARAMS
+        """
         architecture = architecture_info['arch']
         architecture_type = architecture_info['arch_type']
         
