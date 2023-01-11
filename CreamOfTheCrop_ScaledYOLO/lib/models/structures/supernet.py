@@ -67,6 +67,7 @@ class SuperNet(nn.Module):
         self.logger = logger
         # self.hetero_choices = [8, 4, 2] #from n_bottlenecks choices
         self.hetero_choices = choices['n_bottlenecks'] #[8, 6, 4, 2]
+        self.search_space = deepcopy(choices)
         # self.choices = calculate_choices(choices)
         self.choices = 1
         for choice_key, choice_list in choices.items():
@@ -340,11 +341,18 @@ class SuperNet(nn.Module):
                         # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
                         soft_mask_variables = distributions[current_theta]
                         # print(f'{current_theta:2d} candidate layer: {soft_mask_variables.detach().cpu().numpy()}')
+                        gamma_length = len(self.search_space['gamma'])
                         current_operation = 0
                         operators_outputs = []
-                        for op in blocks:
-                            operators_outputs.append(op(x) * soft_mask_variables[current_operation])
-                            current_operation += 1
+                        for depth_idx, op in enumerate(blocks):
+                            gamma_raw_dist = [soft_mask_variables[depth_idx + gamma_idx * gamma_length] for gamma_idx in range(gamma_length)]
+                            depth_dist = sum(gamma_raw_dist)
+                            gamma_list = [gamma_prob / depth_dist for gamma_prob in gamma_raw_dist]
+                            args = {
+                                'gamma_dist' : gamma_list
+                            }
+                            
+                            operators_outputs.append(op(x, args=args) * depth_dist)
                         x = sum(operators_outputs)
                     else:
                         n_bottlenecks = self.hetero_choices[-1]
@@ -879,11 +887,9 @@ class SuperNet(nn.Module):
                         soft_mask_variables = architecture[current_theta]
 
                         operators_flops = 0
-                        current_operation = 0
-                        for operation in blocks:
+                        for current_operation in range(len(soft_mask_variables)):
                             operator_flops = flops_dict[str(block_id)]['0'][str(current_operation)]
                             operators_flops = operators_flops + (operator_flops * soft_mask_variables[current_operation])
-                            current_operation += 1
 
                         overall_flops = overall_flops + (operators_flops)
                         current_theta += 1
@@ -936,11 +942,9 @@ class SuperNet(nn.Module):
                         soft_mask_variables = architecture[current_theta]
 
                         operators_params = 0
-                        current_operation = 0
-                        for operation in blocks:
+                        for current_operation in range(soft_mask_variables):
                             operator_params = params_dict[str(block_id)]['0'][str(current_operation)]
                             operators_params = operators_params + (operator_params * soft_mask_variables[current_operation])
-                            current_operation += 1
 
                         overall_params = overall_params + (operators_params)
                         current_theta += 1
@@ -982,13 +986,15 @@ class SuperNet(nn.Module):
                     if (isinstance(chosen_block, BottleneckCSP) or isinstance(chosen_block, BottleneckCSP2)):
                         # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
                         soft_mask_variables = architecture[current_theta]
-
+                        
+                        gamma_length = len(self.search_space['gamma'])
                         operators_layers = 0
-                        current_operation = 0
-                        for operation in blocks:
+                        for depth_idx in enumerate(blocks):
+                            gamma_raw_dist = [soft_mask_variables[depth_idx + gamma_idx * gamma_length] for gamma_idx in range(gamma_length)]
+                            depth_dist = sum(gamma_raw_dist)
+                            
                             operator_layers = operation.n
-                            operators_layers = operators_layers + (operator_layers * soft_mask_variables[current_operation])
-                            current_operation += 1
+                            operators_layers = operators_layers + (operator_layers * depth_dist)
 
                         overall_layers = overall_layers + (operators_layers)
                         current_theta += 1

@@ -124,8 +124,10 @@ class Concat(nn.Module):
 class BottleneckCSP(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     # Modify from    https://github.com/chiahuilin0531/ScaledYOLOv4
-    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, gamma_space=None):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(BottleneckCSP, self).__init__()
+        e=max(gamma_space)
+        channel_values = [int(gamma*c2) for gamma in gamma_space]
         self.n = n
         self.search_type = self.search_space_id
         if self.search_type == 0:
@@ -162,6 +164,13 @@ class BottleneckCSP(nn.Module):
         
             self.m = nn.Sequential(*[Bottleneck(c_h, c_h, shortcut, g, e=1.0) for _ in range(n)])
         self.block_name = f'bottlecsp_num{n}_gamma{e}'
+        
+        # self.masks = (num_of_mask, max_channel)
+        self.masks = torch.zeros((len(gamma_space), max(channel_values)))
+        for idx, num_channel in enumerate(channel_values):
+            self.masks[idx, :num_channel] = 1
+        self.masks = torch.nn.parameter.Parameter(self.masks, requires_grad=False)
+            
 
     @classmethod
     def set_search_space(cls, search_space_id):
@@ -192,12 +201,30 @@ class BottleneckCSP(nn.Module):
     def get_block_name(self):
         return self.block_name
 
-    def forward(self, x, n_bottlenecks=None):
-        if (n_bottlenecks == None):
-            y1 = self.cv3(self.m(self.cv1(x)))
-        else:
-            y1 = self.cv3(self.m[:n_bottlenecks](self.cv1(x)))
-        y2 = self.cv2(x)
+    def forward(self, x, n_bottlenecks=None, args=None):
+        """
+        Parameters
+        ----------
+        x: float32, (b, c, w, h)
+        n_bottlenecks: integer
+        args: dict
+            'gamma_dist': float32, (num_of_gamma_choices,)
+        """
+        mask = 1.0
+        if args is not None:
+            if 'gamma_dist' in args.keys() and args['gamma_dist'] is not None:
+                # mask = self.masks * args['gamma_dist']
+                mask = 0.0
+                for i in range(len(self.masks)):
+                    mask += self.masks[i] *  args['gamma_dist'][i]
+                mask = mask.reshape(1,-1,1,1)
+        if (n_bottlenecks == None): n_bottlenecks = len(self.m)
+
+        m_out = self.cv1(x) * mask
+        for m in self.m[:n_bottlenecks]:
+            m_out = m(m_out) * mask
+        y1 = self.cv3(m_out) * mask
+        y2 = self.cv2(x) * mask
         return self.cv4(self.act(self.bn(torch.cat((y1, y2), dim=1))))
 
     # def forward(self, x):
@@ -241,8 +268,10 @@ class Upsample(nn.Module):
 
 class BottleneckCSP2(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
-    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, gamma_space=None):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(BottleneckCSP2, self).__init__()
+        e=max(gamma_space)
+        channel_values = [int((gamma+0.5)*c2) for gamma in gamma_space]
         self.n = n
         self.search_type = self.search_space_id
         if self.search_type == 0:
@@ -298,6 +327,12 @@ class BottleneckCSP2(nn.Module):
             self.m = nn.Sequential(*[Bottleneck(c_h, c_h, shortcut, g, e=1.0) for _ in range(n)])
 
         self.block_name = f'bottlecsp2_num{n}_gamma{e}'
+        
+        # self.masks = (num_of_mask, max_channel)
+        self.masks = torch.zeros((len(gamma_space), max(channel_values)))
+        for idx, num_channel in enumerate(channel_values):
+            self.masks[idx, :num_channel] = 1
+        self.masks = torch.nn.parameter.Parameter(self.masks, requires_grad=False)
 
     @classmethod
     def set_search_space(cls, search_space_id):
@@ -328,14 +363,34 @@ class BottleneckCSP2(nn.Module):
 
         return sum_arr(metric_array)
 
-    def forward(self, x, n_bottlenecks=None):
+    def forward(self, x, n_bottlenecks=None, args=None):
+        """
+        Parameters
+        ----------
+        x: float32, (b, c, w, h)
+        n_bottlenecks: integer
+        args: dict
+            'gamma_dist': float32, (num_of_gamma_choices,)
+        """
+        mask = 1.0
+        if args is not None:
+            if 'gamma_dist' in args.keys() and args['gamma_dist'] is not None:
+                # mask = self.masks * args['gamma_dist']
+                mask = 0.0
+                for i in range(len(self.masks)):
+                    mask += self.masks[i] *  args['gamma_dist'][i]
+                # mask = mask.unsqueeze(0)
+                mask = mask.reshape(1,-1,1,1)
+        if (n_bottlenecks == None): n_bottlenecks = len(self.m)
+        
         if self.search_type == 0 or self.search_type == 1:
-            x1 = self.cv1(x)
-            if (n_bottlenecks == None):
-                y1 = self.m(x1)
-            else:
-                y1 = self.m[:n_bottlenecks](x1)
-            y2 = self.cv2(x1)
+            x1 = m_out = self.cv1(x) * mask
+            
+            for m in self.m[:n_bottlenecks]:
+                m_out = m(m_out) * mask
+                
+            y1 = m_out
+            y2 = self.cv2(x1) * mask
             return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
         elif self.search_type == 2:
             x1 = self.cv1(x)

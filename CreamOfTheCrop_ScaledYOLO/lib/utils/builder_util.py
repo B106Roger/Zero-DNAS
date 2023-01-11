@@ -41,17 +41,20 @@ def decode_arch_def(
     return arch_args
 
 
-def modify_block_args(block_args, n_bottlenecks, gamma):
+def modify_block_args(block_args, n_bottlenecks, gamma=None, gamma_space=None):
     block_type = block_args['block_type']
     if block_type == 'bottlecsp':
         block_args['n_bottlenecks'] = n_bottlenecks #max number
-        block_args['gamma'] = gamma
+        if gamma: block_args['gamma'] = gamma
+        if gamma_space: block_args['gamma_space'] = gamma_space
     elif block_type == 'bottlecsp2':
         block_args['n_bottlenecks'] = n_bottlenecks #max number
-        block_args['gamma'] = gamma
+        if gamma: block_args['gamma'] = gamma
+        if gamma_space: block_args['gamma_space'] = gamma_space
     elif block_type == 'C3':
         block_args['n_bottlenecks'] = n_bottlenecks #max number
-        block_args['gamma'] = gamma
+        if gamma: block_args['gamma'] = gamma
+        if gamma_space: block_args['gamma_space'] = gamma_space
     # elif block_type == 'er':
     #     block_args['exp_kernel_size'] = kernel_size
     # else:

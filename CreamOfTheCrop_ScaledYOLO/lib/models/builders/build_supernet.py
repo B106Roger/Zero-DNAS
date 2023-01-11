@@ -33,13 +33,21 @@ class SuperNetBuilder:
             dil_conv=False,
             logger=None):
 
+        # [Roger] Origin Case
         # dict
         # choices = {'kernel_size': [3, 5, 7], 'exp_ratio': [4, 6]}
-        self.choices = [[x, y] for x in choices['gamma']
-                        for y in choices['n_bottlenecks']]
+        # self.choices = [[x, y] for x in choices['gamma']
+        #                 for y in choices['n_bottlenecks']]
+        # [Roger] Test Case
+        # self.individual_choices = [[x, y] for x in choices['gamma'] for y in choices['n_bottlenecks']]
+        self.individual_choices = [[x] for x in choices['n_bottlenecks']]
+        self.search_space = deepcopy(choices)
+        self.choices_num = len(self.individual_choices) - 1
+        #######################################################################
+        
         self.n_bottlenecks = [x for x in choices['n_bottlenecks']]
         # self.choices = [[x] for x in choices['gamma']]
-        self.choices_num = len(self.choices) - 1
+        # self.choices_num = len(self.choices) - 1
         self.channel_multiplier = channel_multiplier
         self.channel_divisor = channel_divisor
         self.channel_min = channel_min
@@ -141,13 +149,15 @@ class SuperNetBuilder:
                 self.logger.info(
                     '  BottleneckCSP {}, Args: {}'.format(
                         block_idx, str(ba)))
-            block = BottleneckCSP(c1=ba['in_chs'], c2=ba['out_chs'], g=ba['groups'], n=ba['n_bottlenecks'], e=ba['gamma'])
+            # block = BottleneckCSP(c1=ba['in_chs'], c2=ba['out_chs'], g=ba['groups'], n=ba['n_bottlenecks'], e=ba['gamma'])
+            block = BottleneckCSP(c1=ba['in_chs'], c2=ba['out_chs'], g=ba['groups'], n=ba['n_bottlenecks'], gamma_space=ba['gamma_space'])
         elif bt == 'bottlecsp2':
             if self.verbose:
                 self.logger.info(
                     '  BottleneckCSP2 {}, Args: {}'.format(
                         block_idx, str(ba)))
-            block = BottleneckCSP2(c1=ba['in_chs'], c2=ba['out_chs'], g=ba['groups'], n=ba['n_bottlenecks'], e=ba['gamma'])
+            # block = BottleneckCSP2(c1=ba['in_chs'], c2=ba['out_chs'], g=ba['groups'], n=ba['n_bottlenecks'], e=ba['gamma'])
+            block = BottleneckCSP2(c1=ba['in_chs'], c2=ba['out_chs'], g=ba['groups'], n=ba['n_bottlenecks'], gamma_space=ba['gamma_space'])
         elif bt == 'c3':
             if self.verbose:
                 self.logger.info(
@@ -256,8 +266,13 @@ class SuperNetBuilder:
                 if stage_idx == 0 or stage_idx == 6:
                     self.choice_num = 1
                 else:
-                    self.choice_num = len(self.choices)
+                    ## [Roger] Origin Case
+                    # self.choice_num = len(self.choices)
+                    ##[Roger] Test Case
+                    self.choice_num = len(self.individual_choices)
+                    ## [Roger] End Case
 
+                    
                     if self.dil_conv:
                         self.choice_num += 2
                 choice_blocks = nn.ModuleList()
@@ -271,11 +286,18 @@ class SuperNetBuilder:
                     block.block_args = block_args
                     choice_blocks.append(block)
                 else:
-                    for choice_idx, choice in enumerate(self.choices):
+                    # [Roger] Origin Case
+                    # for choice_idx, choice in enumerate(self.choices):
+                    #     # create the block
+                    #     block_args = deepcopy(block_args_copy)
+                    #     block_args = modify_block_args(
+                    #         block_args, n_bottlenecks=choice[1], gamma=choice[0])
+                    # [Roger] Test Case
+                    for choice_idx, choice in enumerate(self.individual_choices):
                         # create the block
                         block_args = deepcopy(block_args_copy)
-                        block_args = modify_block_args(
-                            block_args, n_bottlenecks=choice[1], gamma=choice[0])
+                        block_args = modify_block_args(block_args, n_bottlenecks=choice[0], gamma_space=self.search_space['gamma'])
+                    ## [Roger] End Case
                         block = self._make_block(
                             block_args, choice_idx, total_block_idx, total_block_count)
                         
@@ -314,7 +336,8 @@ class SuperNetBuilder:
                                                block.conv_dw.stride[0])
                         choice_blocks.append(block)
 
-                    print( f"block_idx:{block_idx} | block_type: {block_type} | choice_num: {self.choice_num}")
+                    print( f"block_idx:{block_idx} | block_type: {block_type} | choice_num: {self.choice_num}/{len(choice_blocks)} | {block_args}")
+                    
                 blocks.append(choice_blocks)
                 # incr global block idx (across all stacks)
                 total_block_idx += 1

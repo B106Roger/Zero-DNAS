@@ -9,11 +9,13 @@ import json
 
 from lib.utils.flops_counter import get_model_complexity_info
 from lib.models.blocks.yolo_blocks import get_algorithm_type
+from copy import deepcopy
 import numpy as np
 
 
 class FlopsEst(object):
-    def __init__(self, model, input_shape=(2, 3, 416, 416)):
+    def __init__(self, model, input_shape=(2, 3, 416, 416), search_space=None):
+        self.search_space = deepcopy(search_space)
         self.block_num = len(model.blocks)
         self.choice_num = len(model.blocks[0])
         self.flops_dict = {}
@@ -61,7 +63,7 @@ class FlopsEst(object):
                     flops_list = []
                     param_list = []
                     for choice_id, choice in enumerate(module):
-                        print(f'block {block_id} | module_id {module_id} | choice_id {choice_id}', end='  ')
+                        print(f'block {block_id} | module_id {module_id} | choice_id {choice_id} | {choice.get_block_name()}', end='  ')
                         choice_id = str(choice_id)
                         if choice.get_block_name() == 'concat':
                             out_chs = choice.block_arguments['out_chs']
@@ -72,6 +74,7 @@ class FlopsEst(object):
                             # Store the flop and param for each choices
                             flops_list.append(0)
                             param_list.append(0)
+                            print()
                             
                             
                         elif 'up' in choice.get_block_name():
@@ -101,7 +104,7 @@ class FlopsEst(object):
                             # Store the flop and param for each choices
                             flops_list.append(flops / 1e6)
                             param_list.append(params / 1e6)
-                        else:
+                        elif 'bottlecsp' not in choice.get_block_name():
                             in_chs = choice.block_arguments['in_chs']
                             input_shape = (in_chs, spatial_dimension[0], spatial_dimension[1])
                             macs, params, next_spatial_dimension = get_model_complexity_info(
@@ -127,6 +130,59 @@ class FlopsEst(object):
                             # Store the flop and param for each choices
                             flops_list.append(flops / 1e6)
                             param_list.append(params / 1e6)
+                        else:
+                            in_chs = choice.block_arguments['in_chs']
+                            input_shape = (in_chs, spatial_dimension[0], spatial_dimension[1])
+                            macs, params, next_spatial_dimension = get_model_complexity_info(
+                                choice, 
+                                input_res=input_shape, 
+                                as_strings=False, 
+                                print_per_layer_stat=False
+                            )
+                            algorithm_type = get_algorithm_type()
+                            if algorithm_type == 'ZeroDNAS_Egor':
+                                flops = macs
+                            elif algorithm_type == 'DNAS' or algorithm_type == 'ZeroCost':
+                                flops = macs * 2
+                            else:
+                                raise ValueError(f"Invalid algorithm type {algorithm_type}")
+                            flops_dynamic += flops / 1e6
+                            params_dynamic += params / 1e6
+                            ##############################################
+                            gamma_list = self.search_space['gamma']
+                            depth_list = self.search_space['n_bottlenecks']
+                            idx = -1
+                            print()
+                            if choice_id == str(len(module) - 1):
+                                for gamma in gamma_list:
+                                    for n_bottleneck in depth_list:
+                                        idx+=1
+                                        ba=choice.block_arguments
+                                        choice_instance = type(choice)(c1=ba['in_chs'], c2=ba['out_chs'], n=n_bottleneck, gamma_space=[gamma])
+                                        macs, params, next_spatial_dimension = get_model_complexity_info(
+                                            choice_instance, 
+                                            input_res=input_shape, 
+                                            as_strings=False, 
+                                            print_per_layer_stat=False
+                                        )
+                                        algorithm_type = get_algorithm_type()
+                                        if algorithm_type == 'ZeroDNAS_Egor':
+                                            flops = macs
+                                        elif algorithm_type == 'DNAS' or algorithm_type == 'ZeroCost':
+                                            flops = macs * 2
+                                        else:
+                                            raise ValueError(f"Invalid algorithm type {algorithm_type}")
+                                        spatial_dimension = next_spatial_dimension
+
+                                        self.flops_dict[block_id][module_id][str(idx)] = flops / 1e6       # FLOPS(M)
+                                        self.params_dict[block_id][module_id][str(idx)] = params / 1e6     # Params(M)
+
+                                        # flops_dynamic += flops / 1e6
+                                        # params_dynamic += params / 1e6
+                                        # Store the flop and param for each choices
+                                        flops_list.append(flops / 1e6)
+                                        param_list.append(params / 1e6)
+                                
 
                     max_param_arch_params += param_list[np.argmax(param_list)] # / 1e6
                     max_param_arch_flops  += flops_list[np.argmax(param_list)] # / 1e6

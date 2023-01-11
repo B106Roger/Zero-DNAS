@@ -637,7 +637,6 @@ def build_targets(p, targets, model, logger=None):
             # t=(increase_num_of_bbox, 7)
             # t.repeat((5, 1, 1))=(5, increase_num_of_bbox, 7)
             t = t.repeat((5, 1, 1))[j]
-            print('[Roger] t', t[:20])
             offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
             # offsets => (num_of_targets, 2) => contain one of coordinate
             # (0.0, 0.0), (0.5, 0.0), (0.0, 0.5), (0.0, -0.5), (-0.5, 0.0)
