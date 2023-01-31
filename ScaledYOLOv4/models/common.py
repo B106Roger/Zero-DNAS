@@ -83,7 +83,7 @@ class BottleneckCSP2(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, e=0.5, shortcut=False, g=1):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(BottleneckCSP2, self).__init__()
-        self.search_type = 1
+        self.search_type = 0
         if self.search_type==0:
             c_ = int(c2)  # hidden channels
             self.cv1 = Conv(c1, c_, 1, 1)
