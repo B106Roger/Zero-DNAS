@@ -323,7 +323,7 @@ def training_step(task_flops, task_params, device, model, random_cand, est, wot_
 ##############################
 def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task_params, 
                      est=None, logger=None, local_rank=0, world_size=0, is_gumbel=False,
-                     prefix='', epoch=None, total_epoch=None, logdir='./', ema=None):
+                     prefix='', epoch=None, total_epoch=None, logdir='./', ema=None, warmup=True):
     batch_time_m = AverageMeter()
     data_time_m = AverageMeter()
     training_losses_m = AverageMeter()
@@ -365,7 +365,7 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
         imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
         
         ni = iter_idx + iterations * (epoch- 1)
-        if ni <= nw:
+        if ni <= nw and warmup:
             import math
             lf = lambda x: (((1 + math.cos(x * math.pi / total_epoch)) / 2) ** 1.0) * 0.8 + 0.2
             xi = [0, nw]  # x interp

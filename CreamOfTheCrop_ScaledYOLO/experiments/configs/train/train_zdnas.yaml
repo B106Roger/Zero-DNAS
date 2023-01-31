@@ -44,7 +44,7 @@ WEIGHT_DECAY: 0.0005
 THETA_OPTIMIZER:
   OPT: 'adam'
   OPT_EPS: 1e-2 # eps for adam
-  LR: 0.01
+  LR: 0.001
   MOMENTUM: 0.0
   WEIGHT_DECAY: 5e-4
 
