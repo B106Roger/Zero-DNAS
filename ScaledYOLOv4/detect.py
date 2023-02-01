@@ -60,6 +60,8 @@ def detect(save_img=False):
     t0 = time.time()
     img = torch.zeros((1, 3, imgsz, imgsz), device=device)  # init img
     _ = model(img.half() if half else img) if device.type != 'cpu' else None  # run once
+    avg_time = 0
+    avg_cnt  = 0
     for path, img, im0s, vid_cap in dataset:
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -111,7 +113,12 @@ def detect(save_img=False):
                         plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=2)
 
             # Print time (inference + NMS)
-            print('%sDone. (%.3fs)' % (s, t2 - t1))
+            if img.shape[2] == img.shape[3]:
+                avg_time += (t2 - t1)
+                avg_cnt  += 1
+                print('%sDone. (%.3fs) FSP: (%5.2f)  %d IMAGES AVG FPS: (%5.2f)' % (s, t2 - t1, 1 / (t2-t1), avg_cnt, 1 / (avg_time / avg_cnt)))
+            else:
+                print('%sDone. (%.3fs) FSP: (%5.2f)' % (s, t2 - t1, 1 / (t2-t1)))
 
             # Stream results
             if view_img:
