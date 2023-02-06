@@ -28,6 +28,8 @@ def detect(save_img=False):
         shutil.rmtree(out)  # delete output folder
     os.makedirs(out)  # make new output folder
     half = device.type != 'cpu'  # half precision only supported on CUDA
+    half = half and opt.half
+    print(f'[Roger] half precision: {half}')
 
     # Load model
     model = attempt_load(weights, map_location=device)  # load FP32 model
@@ -166,6 +168,8 @@ if __name__ == '__main__':
     parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--update', action='store_true', help='update all models')
+    parser.add_argument('--half', default=0, help='wether use half precison or not')
+    
     opt = parser.parse_args()
     print(opt)
 
