@@ -29,6 +29,11 @@ def detect(save_img=False):
     os.makedirs(out)  # make new output folder
     half = device.type != 'cpu'  # half precision only supported on CUDA
 
+    half = half and opt.half
+    print(f'[Roger] half: {half}')
+    if half: print('[Info] Half Precision Mode')
+    else: print('[Info] Double Precision Mode')
+    
     # Load model
     model = attempt_load(weights, map_location=device)  # load FP32 model
     imgsz = check_img_size(imgsz, s=model.stride.max())  # check img_size
@@ -166,6 +171,8 @@ if __name__ == '__main__':
     parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--update', action='store_true', help='update all models')
+    parser.add_argument('--half', default=0, type=int, help='use half precision or not')
+    
     opt = parser.parse_args()
     print(opt)
 

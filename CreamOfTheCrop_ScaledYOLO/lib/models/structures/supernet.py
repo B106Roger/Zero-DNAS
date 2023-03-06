@@ -371,7 +371,35 @@ class SuperNet(nn.Module):
         chosen_subnet = [None]
         return x, feature_out, chosen_subnet
 
+    def forward_variance(self):
+        for layer in self.blocks:   
+            for blocks in layer:
+                for candidate in blocks:
+                    print(candidate.get_block_name(), end='')
+                    print(candidate.get_var())
+                 
+    def forward_stage_variance(self):
+        for layer in self.blocks:   
+            for blocks in layer:
+                
 
+                if len(blocks) == 1:
+                    print(blocks[0].get_block_name(), end='')
+                    print(blocks[0].get_var())
+                else:
+                    w = []
+                    for candidate in blocks:
+                        w.append(candidate.get_weights())
+                    w = torch.cat(w)
+                    print(torch.mean(w), torch.var(w))
+
+    def forward_whole_variance(self):
+        # print(len(self.parameters()))
+        weights = [torch.flatten(w).detach() for w in self.parameters()]
+        print(len(weights))
+        weights = torch.cat(weights)
+        print(torch.mean(weights), torch.var(weights))
+    
     def forward(self, x, architecture=None, first_run=False, calc_metric=False):
         x, feature_out, chosen_subnet = self.forward_features_confinuous(x, architecture, first_run=first_run, calc_metric=calc_metric)
         # x, feature_out, chosen_subnet = self.forward_features_confinuous(x, architecture, first_run=first_run, calc_metric=calc_metric)

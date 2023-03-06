@@ -133,6 +133,10 @@ class Model(nn.Module):
             print('%.1fms total' % sum(dt))
         return x
 
+    def forward_variance(self):
+        for m in self.model:
+            print(m.name)
+
     def _initialize_biases(self, cf=None):  # initialize biases into Detect(), cf is class frequency
         # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1.
         m = self.model[-1]  # Detect() module

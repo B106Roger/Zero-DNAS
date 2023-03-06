@@ -61,6 +61,15 @@ class Conv(nn.Module):
     def fuseforward(self, x):
         return self.act(self.conv(x))
 
+    def get_var(self):
+        w = self.get_weights()
+        return torch.mean(w), torch.var(w)
+
+    def get_weights(self):
+        p = list(self.conv.parameters())
+        w = p[0].detach().cpu()
+        return torch.flatten(w)
+
 class ConvNP(nn.Module):
     # Not Prunable
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
@@ -85,7 +94,15 @@ class ConvNP(nn.Module):
 
     def fuseforward(self, x):
         return self.act(self.conv(x))
+    def get_var(self):
+        w = self.get_weights()
+        return torch.mean(w), torch.var(w)
 
+    def get_weights(self):
+        p = list(self.conv.parameters())
+        w = p[0].detach().cpu()
+        return torch.flatten(w)
+    
 class Bottleneck(nn.Module):
     # Standard bottleneck
     def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, shortcut, groups, expansion
@@ -96,13 +113,22 @@ class Bottleneck(nn.Module):
         self.add = shortcut and c1 == c2
         self.block_name = f'bottle'
 
-
     def get_block_name(self):
         return self.block_name
 
     def forward(self, x):
         return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
 
+    def get_var(self):
+        w = self.get_weights()
+        return torch.mean(w), torch.var(w)
+    
+    def get_weights(self):
+        w = torch.cat([
+            self.cv1.get_weights(),
+            self.cv2.get_weights(),
+        ])
+        return w
 
 class Concat(nn.Module):
     # Concatenate a list of tensors along dimension
@@ -117,6 +143,12 @@ class Concat(nn.Module):
     def forward(self, x):
         return torch.cat(x, self.d)
 
+    def get_var(self):
+        return
+    
+    def get_weights(self):
+        return 
+    
 class BottleneckCSP(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     # Modify from    https://github.com/chiahuilin0531/ScaledYOLOv4
@@ -196,10 +228,16 @@ class BottleneckCSP(nn.Module):
         y2 = self.cv2(x)
         return self.cv4(self.act(self.bn(torch.cat((y1, y2), dim=1))))
 
-    # def forward(self, x):
-    #     y1 = self.cv3(self.m(self.cv1(x)))
-    #     y2 = self.cv2(x)
-    #     return self.cv4(self.act(self.bn(torch.cat((y1, y2), dim=1))))
+    def get_var(self):
+        w = self.get_weights()
+        return torch.mean(w), torch.var(w)
+    
+    def get_weights(self):
+        w = []
+        for p in self.parameters():
+            if len(p.shape) == 4:
+                w.append(torch.flatten(p.detach().cpu()))
+        return torch.cat(w)
 
 
 class C3(nn.Module):
@@ -233,7 +271,12 @@ class Upsample(nn.Module):
 
     def forward(self, x):
         return self.upsample(x)
+    
+    def get_var(self):
+        return
 
+    def get_weights(self):
+        return
 
 class BottleneckCSP2(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
@@ -353,8 +396,19 @@ class BottleneckCSP2(nn.Module):
                 
             y2 = self.cv2(x12)
             return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
+
+    def get_var(self):
+        w = self.get_weights()
+        return torch.mean(w), torch.var(w)
         
-        
+    def get_weights(self):
+        w = []
+        for p in self.parameters():
+            if len(p.shape) == 4:
+                w.append(torch.flatten(p.detach().cpu()))
+        return torch.cat(w)
+
+    
 class SPP(nn.Module):
     # Spatial pyramid pooling layer used in YOLOv3-SPP
     def __init__(self, c1, c2, k=(5, 9, 13)):
@@ -373,7 +427,17 @@ class SPP(nn.Module):
         x = self.cv1(x)
         return self.cv2(torch.cat([x] + [m(x) for m in self.m], 1))
 
-
+    def get_var(self):
+        w = self.get_weights()
+        return torch.mean(w), torch.var(w)
+        
+        
+    def get_weights(self):
+        w = []
+        for p in self.parameters():
+            if len(p.shape) == 4:
+                w.append(torch.flatten(p.detach().cpu()))
+        return torch.cat(w)
 
 class SPPCSP(nn.Module):
     # CSP SPP https://github.com/WongKinYiu/CrossStagePartialNetworks
@@ -408,7 +472,17 @@ class SPPCSP(nn.Module):
         y1 = self.cv6(self.cv5(torch.cat([x1] + [m(x1) for m in self.m], 1)))
         y2 = self.cv2(x)
         return self.cv7(self.act(self.bn(torch.cat((y1, y2), dim=1))))
-
+    
+    def get_var(self):
+        w = self.get_weights()
+        return torch.mean(w), torch.var(w)
+            
+    def get_weights(self):
+        w = []
+        for p in self.parameters():
+            if len(p.shape) == 4:
+                w.append(torch.flatten(p.detach().cpu()))
+        return torch.cat(w)
 
 class Detect(nn.Module):
     def __init__(self, nc=80, anchors=(), ch=()):  # detection layer
