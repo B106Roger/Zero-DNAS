@@ -28,6 +28,8 @@ def detect(save_img=False):
         shutil.rmtree(out)  # delete output folder
     os.makedirs(out)  # make new output folder
     half = device.type != 'cpu'  # half precision only supported on CUDA
+    half = half and opt.half
+    print(f'[Roger] half precision: {half}')
 
     half = half and opt.half
     print(f'[Roger] half: {half}')
@@ -172,7 +174,7 @@ if __name__ == '__main__':
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--update', action='store_true', help='update all models')
     parser.add_argument('--half', default=0, type=int, help='use half precision or not')
-    
+
     opt = parser.parse_args()
     print(opt)
 
