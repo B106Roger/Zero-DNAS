@@ -124,11 +124,11 @@ class Concat(nn.Module):
 class BottleneckCSP(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     # Modify from    https://github.com/chiahuilin0531/ScaledYOLOv4
-    def __init__(self, c1, c2, n=1, shortcut=True, g=1, gamma_space=None):  # ch_in, ch_out, number, shortcut, groups, expansion
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, gamma_space=None, bottleneck_space=None):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(BottleneckCSP, self).__init__()
         e=max(gamma_space)
         channel_values = [int(gamma*c2) for gamma in gamma_space]
-        self.n = n
+        self.n = max(bottleneck_space) if bottleneck_space is not None else n
         self.search_type = self.search_space_id
         if self.search_type == 0:
             c_ = int(c2 * e)  # hidden channels
@@ -211,18 +211,35 @@ class BottleneckCSP(nn.Module):
             'gamma_dist': float32, (num_of_gamma_choices,)
         """
         mask = 1.0
+        if (n_bottlenecks == None): n_bottlenecks = len(self.m)
+        
+        
         if args is not None:
-            if 'gamma_dist' in args.keys() and args['gamma_dist'] is not None:
-                # mask = self.masks * args['gamma_dist']
+            if 'gamma' in args.keys() and args['gamma'] is not None:
                 mask = 0.0
                 for i in range(len(self.masks)):
-                    mask += self.masks[i] *  args['gamma_dist'][i]
+                    mask += self.masks[i] *  args['gamma'][i]
                 mask = mask.reshape(1,-1,1,1)
-        if (n_bottlenecks == None): n_bottlenecks = len(self.m)
-
-        m_out = self.cv1(x) * mask
-        for m in self.m[:n_bottlenecks]:
-            m_out = m(m_out) * mask
+        
+        if args is not None and 'n_bottlenecks' in args.keys() and args['n_bottlenecks'] is not None:
+            depth_vals = args['n_bottlenecks_val']
+            depth_dist = args['n_bottlenecks']
+            
+            m_out = self.cv1(x) * mask
+            aggregation = 0
+            depth_idx = 0
+            for depth in range(len(self.m) + 1):
+                if depth == depth_vals[depth_idx]:
+                    aggregation += m_out * depth_dist[depth_idx]
+                    depth_idx += 1
+                if depth == depth_vals[-1]: break
+                m_out = self.m[depth](m_out) * mask
+            m_out = aggregation
+        else:
+            m_out = self.cv1(x) * mask
+            for m in self.m[:n_bottlenecks]:
+                m_out = m(m_out) * mask
+        
         y1 = self.cv3(m_out) * mask
         y2 = self.cv2(x) * mask
         return self.cv4(self.act(self.bn(torch.cat((y1, y2), dim=1))))
@@ -268,11 +285,11 @@ class Upsample(nn.Module):
 
 class BottleneckCSP2(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
-    def __init__(self, c1, c2, n=1, shortcut=False, g=1, gamma_space=None):  # ch_in, ch_out, number, shortcut, groups, expansion
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, gamma_space=None, bottleneck_space=None):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(BottleneckCSP2, self).__init__()
         e=max(gamma_space)
         channel_values = [int((gamma+0.5)*c2) for gamma in gamma_space]
-        self.n = n
+        self.n = max(bottleneck_space) if bottleneck_space is not None else n
         self.search_type = self.search_space_id
         if self.search_type == 0:
             c_ = int(c2)  # hidden channels
@@ -304,27 +321,6 @@ class BottleneckCSP2(nn.Module):
                 raise ValueError(f'Invalid Type: {TYPE}')
 
             self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
-        elif self.search_type == 2:
-            c_  = int(c2)
-            c_h = int(c_ * (0.5 + e))  # hidden channels
-            c_s = int(c_ * (1.5 - e))  # shown  channels
-            self.cv1 = Conv(c1, c_, 1, 1)
-            self.cv2 = nn.Conv2d(c_, c_s, 1, 1, bias=False)
-            self.cv3 = Conv(2 * c_, c2, 1, 1)
-            self.bn = nn.GroupNorm(1, 2 * c_) 
-            self.act = nn.ReLU()
-            self.pre_m = Conv(c_, c_h, 1, 1)
-            self.m = nn.Sequential(*[Bottleneck(c_h, c_h, shortcut, g, e=1.0) for _ in range(n)])
-        elif self.search_type == 3:
-            c_  = int(c2)
-            c_h = self.c_h = int(c_ * (0.5 + e))  # hidden channels
-            c_s = self.c_s = int(c_ * (1.5 - e))  # shown  channels
-            self.cv1 = Conv(c1, c_ * 2, 1, 1)
-            self.cv2 = nn.Conv2d(c_s, c_s, 1, 1, bias=False)
-            self.cv3 = Conv(2 * c_, c2, 1, 1)
-            self.bn = nn.GroupNorm(1, 2 * c_) 
-            self.act = nn.ReLU()
-            self.m = nn.Sequential(*[Bottleneck(c_h, c_h, shortcut, g, e=1.0) for _ in range(n)])
 
         self.block_name = f'bottlecsp2_num{n}_gamma{e}'
         
@@ -373,6 +369,7 @@ class BottleneckCSP2(nn.Module):
             'gamma_dist': float32, (num_of_gamma_choices,)
         """
         mask = 1.0
+        if (n_bottlenecks == None): n_bottlenecks = len(self.m)
         if args is not None:
             if 'gamma_dist' in args.keys() and args['gamma_dist'] is not None:
                 # mask = self.masks * args['gamma_dist']
@@ -381,37 +378,41 @@ class BottleneckCSP2(nn.Module):
                     mask += self.masks[i] *  args['gamma_dist'][i]
                 # mask = mask.unsqueeze(0)
                 mask = mask.reshape(1,-1,1,1)
-        if (n_bottlenecks == None): n_bottlenecks = len(self.m)
         
-        if self.search_type == 0 or self.search_type == 1:
-            x1 = m_out = self.cv1(x) * mask
+        if args is not None and 'n_bottlenecks' in args.keys() and args['n_bottlenecks'] is not None:
+            depth_vals = args['n_bottlenecks_val']
+            depth_dist = args['n_bottlenecks']
             
+            x1 = m_out = self.cv1(x) * mask
+            aggregation = 0
+            depth_idx = 0
+            for depth in range(len(self.m) + 1):
+                if depth == depth_vals[depth_idx]:
+                    aggregation += m_out * depth_dist[depth_idx]
+                    depth_idx += 1
+                if depth == depth_vals[-1]: break
+                m_out = self.m[depth](m_out) * mask
+            m_out = aggregation
+        else:
+            x1 = m_out = self.cv1(x) * mask
             for m in self.m[:n_bottlenecks]:
                 m_out = m(m_out) * mask
-                
-            y1 = m_out
-            y2 = self.cv2(x1) * mask
-            return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
-        elif self.search_type == 2:
-            x1 = self.cv1(x)
-            if (n_bottlenecks == None):
-                y1 = self.m(self.pre_m(x1))
-            else:
-                y1 = self.m[:n_bottlenecks](self.pre_m(x1))
-            y2 = self.cv2(x1)
-            return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))    
-        elif self.search_type == 3:
-            x1 = self.cv1(x)
-            x11 = x1[:, :self.c_h]
-            x12 = x1[:, self.c_h:]
+        
+        y1 = m_out
+        y2 = self.cv2(x1) * mask
+        return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
+    
+        
+        # if self.search_type == 0 or self.search_type == 1:
+        #     x1 = m_out = self.cv1(x) * mask
             
-            if (n_bottlenecks == None):
-                y1 = self.m(x11)
-            else:
-                y1 = self.m[:n_bottlenecks](x11)
+        #     for m in self.m[:n_bottlenecks]:
+        #         m_out = m(m_out) * mask
                 
-            y2 = self.cv2(x12)
-            return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
+        #     y1 = m_out
+        #     y2 = self.cv2(x1) * mask
+        #     return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
+
         
         
 class SPP(nn.Module):

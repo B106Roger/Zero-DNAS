@@ -165,9 +165,15 @@ class SuperNet(nn.Module):
 
     def initialize_thetas(self, block_args):
         thetas = nn.ModuleList()
-        print('len(block_args) - len(self.ignore_stages)', len(block_args) - len(self.ignore_stages))
+        keys = sorted(self.search_space.keys())
         for i in range(len(block_args) - len(self.ignore_stages)):
-            thetas.extend([Theta(torch.Tensor([1.0 / self.choices for i in range(self.choices)]))])
+            vals = nn.ModuleList()
+            for key in keys:
+                search_space_len = len(self.search_space[key])
+                vals.extend([Theta(torch.Tensor([
+                    1.0 / search_space_len for i in range(search_space_len)
+                ]))])
+            thetas.append(vals)
         return thetas
 
     def update_pi(self):
@@ -302,17 +308,17 @@ class SuperNet(nn.Module):
         """
         # Pass data through stem
         # print('Initial shape:', x.shape)
+        keys = sorted(self.search_space.keys())
         if distributions is None:
-            distributions = torch.cat([theta().reshape(1, -1) for theta in self.thetas], dim=0)
-            distributions = distributions.detach()
-            distributions = nn.functional.softmax(distributions, dim=-1)
+            distributions = [
+                [nn.functional.softmax(theta()) for theta in theta_module] 
+                    for theta_module in self.thetas
+            ]
         
         y = []
         x = self.conv_stem(x)
         x = self.bn1(x)
         x = self.act1(x)
-        # print('[Roger] SuperNet.forward_features_confinuous self.act1', x.shape)
-        # print('[Roger] SuperNet.forward_features_confinuous architecture', architecture)
         
         chosen_subnet = ''
         current_theta = 0
@@ -338,22 +344,32 @@ class SuperNet(nn.Module):
                                   
                 if (isinstance(chosen_block, BottleneckCSP) or isinstance(chosen_block, BottleneckCSP2)):
                     if not first_run:
-                        # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
                         soft_mask_variables = distributions[current_theta]
-                        # print(f'{current_theta:2d} candidate layer: {soft_mask_variables.detach().cpu().numpy()}')
-                        gamma_length = len(self.search_space['gamma'])
-                        current_operation = 0
-                        operators_outputs = []
-                        for depth_idx, op in enumerate(blocks):
-                            gamma_raw_dist = [soft_mask_variables[depth_idx + gamma_idx * gamma_length] for gamma_idx in range(gamma_length)]
-                            depth_dist = sum(gamma_raw_dist)
-                            gamma_list = [gamma_prob / depth_dist for gamma_prob in gamma_raw_dist]
-                            args = {
-                                'gamma_dist' : gamma_list
-                            }
+                        args = {}
+                        for key, val in zip(keys, soft_mask_variables):
+                            args[key] = val 
+                        args['n_bottlenecks_val'] = self.search_space['n_bottlenecks']
+
+                        for blk_idx, op in enumerate(blocks):
+                            x = op(x, args=args)
+                        # gamma_length = len(self.search_space['gamma'])
+                        # current_operation = 0
+                        # operators_outputs = []
+                        # for depth_idx, op in enumerate(blocks):
+                        #     # same depth, but different gamma distribution
+                        #      b = [soft_mask_variables[depth_idx + gamma_idx * gamma_length] for gamma_idx in range(gamma_length)]
+                        #     # the probability to choose the depth
+                        #     depth_dist = sum(gamma_raw_dist)
+                        #     # the probability to choose the gamma under certain depth
+                        #     gamma_list = [gamma_prob / depth_dist for gamma_prob in gamma_raw_dist]
+                        #     args = {
+                        #         'gamma_dist' : gamma_list,
+                        #         'depth_dist' : ,
+                        #         'depth_val'  : self.search_space['n_bottlenecks'], 
+                        #     }
                             
-                            operators_outputs.append(op(x, args=args) * depth_dist)
-                        x = sum(operators_outputs)
+                        #     operators_outputs.append(op(x, args=args) * depth_dist)
+                        # x = sum(operators_outputs)
                     else:
                         n_bottlenecks = self.hetero_choices[-1]
                         x = chosen_block(x, n_bottlenecks)
@@ -853,6 +869,7 @@ class SuperNet(nn.Module):
         -------
         overall_flops: torch.tensor(1,), M-FLOPS
         """
+        keys = sorted(self.search_space.keys())
         architecture = architecture_info['arch']
         architecture_type = architecture_info['arch_type']
         
@@ -886,10 +903,21 @@ class SuperNet(nn.Module):
                         # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
                         soft_mask_variables = architecture[current_theta]
 
+                        args = {}
+                        for key, val in zip(keys, soft_mask_variables):
+                            args[key] = val 
+                        args['n_bottlenecks_val'] = self.search_space['n_bottlenecks']
+                        # print(args)
+
                         operators_flops = 0
-                        for current_operation in range(len(soft_mask_variables)):
-                            operator_flops = flops_dict[str(block_id)]['0'][str(current_operation)]
-                            operators_flops = operators_flops + (operator_flops * soft_mask_variables[current_operation])
+                        for g_idx, gamma in enumerate(self.search_space['gamma']):
+                            for n_idx, n_bottleneck in enumerate(self.search_space['n_bottlenecks']):
+                                operator_flops = flops_dict[str(block_id)]['0'][f'{gamma}-{n_bottleneck}']
+                                operators_flops = operators_flops + (operator_flops * args['gamma'][g_idx] * args['n_bottlenecks'][n_idx])
+
+                        # for current_operation in range(len(soft_mask_variables)):
+                        #     operator_flops = flops_dict[str(block_id)]['0'][str(current_operation)]
+                        #     operators_flops = operators_flops + (operator_flops * soft_mask_variables[current_operation])
 
                         overall_flops = overall_flops + (operators_flops)
                         current_theta += 1
@@ -908,6 +936,7 @@ class SuperNet(nn.Module):
         -------
         overall_params: torch.tensor(1,), M-PARAMS
         """
+        keys = sorted(self.search_space.keys())
         architecture = architecture_info['arch']
         architecture_type = architecture_info['arch_type']
         
@@ -941,10 +970,21 @@ class SuperNet(nn.Module):
                         # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
                         soft_mask_variables = architecture[current_theta]
 
+                        args = {}
+                        for key, val in zip(keys, soft_mask_variables):
+                            args[key] = val 
+                        args['n_bottlenecks_val'] = self.search_space['n_bottlenecks']
+                        # print(args)
+                        
                         operators_params = 0
-                        for current_operation in range(soft_mask_variables):
-                            operator_params = params_dict[str(block_id)]['0'][str(current_operation)]
-                            operators_params = operators_params + (operator_params * soft_mask_variables[current_operation])
+                        for g_idx, gamma in enumerate(self.search_space['gamma']):
+                            for n_idx, n_bottleneck in enumerate(self.search_space['n_bottlenecks']):
+                                operator_params = params_dict[str(block_id)]['0'][f'{gamma}-{n_bottleneck}']
+                                operators_params = operators_params + (operator_params * args['gamma'][g_idx] * args['n_bottlenecks'][n_idx])
+
+                        # for current_operation in range(soft_mask_variables):
+                        #     operator_params = params_dict[str(block_id)]['0'][str(current_operation)]
+                        #     operators_params = operators_params + (operator_params * soft_mask_variables[current_operation])
 
                         overall_params = overall_params + (operators_params)
                         current_theta += 1

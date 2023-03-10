@@ -68,6 +68,10 @@ task_dict = {
     'DNAS-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},
     'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},
     'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},  
+
+    'DNAS-S1-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
+    'DNAS-S1-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
+    'DNAS-S1-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
     
     'NAS-SS': { 'GFLOPS': 5.7,  'PARAMS': 32.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS-S':  { 'GFLOPS': 7.0,  'PARAMS': 36.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
@@ -75,18 +79,15 @@ task_dict = {
     'NAS':    { 'GFLOPS': 11.9, 'PARAMS': 52.5, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS-L':  { 'GFLOPS': 16.5, 'PARAMS': 70.2, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
 }
-task_name = 'DNAS-25'
-FLOP_RESOLUTION = None
-TASK_FLOPS      = task_dict[task_name]['GFLOPS']     # e.g TASK_FLOPS  = 5  means 50 GFLOPs
-TASK_PARAMS     = task_dict[task_name]['PARAMS']     # e.g TASK_PARAMS = 32 means 32 million parameters.
-SEARCH_SPACES   = task_dict[task_name]['CHOICES']
+
 def main():
     args, cfg = parse_config_args('super net training')
-    # resolve logging
-    # output_dir = os.path.join(cfg.SAVE_PATH,
-    #                           "{}-{}".format(datetime.now().strftime('%m%d-%H:%M:%S'),
-    #                                          cfg.MODEL))
+    task_name = args.nas if args.nas != '' else 'DNAS-25'
+    TASK_FLOPS      = task_dict[task_name]['GFLOPS']     # e.g TASK_FLOPS  = 5  means 50 GFLOPs
+    TASK_PARAMS     = task_dict[task_name]['PARAMS']     # e.g TASK_PARAMS = 32 means 32 million parameters.
+    SEARCH_SPACES   = task_dict[task_name]['CHOICES']
     FLOP_RESOLUTION = (None, 3, cfg.search_resolution, cfg.search_resolution)
+    
     output_dir = os.path.join(cfg.SAVE_PATH, cfg.exp_name)
     output_bakup_dir = os.path.join(output_dir, 'config')
     config_backup(output_bakup_dir, args)
@@ -285,20 +286,22 @@ def main():
         #     decreasing=decreasing)
 
     # training scheme
-    FREEZE_EPOCH=40
+    # FREEZE_EPOCH=40
     try:
+        print('task_flops', TASK_FLOPS)
+        print('FREEZE_EPOCH', cfg.FREEZE_EPOCH)
         write_thetas(output_dir, model.module.thetas_main if is_parallel(model) else model.thetas_main, -1)
         torch.save(model.state_dict(), os.path.join(output_dir, f'model_0.pt'))
         for epoch in range(1, num_epochs+1):
             model.train()
-            thetas_enable = False if epoch <= FREEZE_EPOCH else True
+            thetas_enable = False if epoch <= cfg.FREEZE_EPOCH else True
             if not thetas_enable:
                 train_epoch_dnas(model, dataloader_weight, optimizer, cfg, device=device, 
                                  task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
                                  est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
                                  epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema
                                 )
-                if epoch == FREEZE_EPOCH:
+                if epoch == cfg.FREEZE_EPOCH:
                     torch.save(model.state_dict(), os.path.join(output_dir, f'model_40.pt'))
             else:
                 train_epoch_dnas(model, dataloader_weight, optimizer, cfg, device=device, 
@@ -353,13 +356,20 @@ def main():
 
 
 def write_thetas(output_dir, thetas, epoch):
-    alpha_distributions = []
-    beta_distributions = []
-    for theta in thetas:
-        alpha=theta().detach().cpu().numpy()
-        alpha_distributions.append(alpha)
-        beta_distributions.append(softmax(alpha))
-
+    # alpha_distributions = []
+    # beta_distributions = []
+    # for theta in thetas:
+    #     alpha=theta().detach().cpu().numpy()
+    #     alpha_distributions.append(alpha)
+    #     beta_distributions.append(softmax(alpha))
+    alpha_distributions = [
+        [theta().detach().cpu().numpy() for theta in theta_module] 
+            for theta_module in thetas
+    ]
+    beta_distributions = [
+        [nn.functional.softmax(theta()).detach().cpu().numpy() for theta in theta_module] 
+            for theta_module in thetas
+    ]
     with open(os.path.join(output_dir, 'alpha_distribution.txt'), 'a') as f:
         f.write(f'epoch: {epoch}')
         f.writelines(str(alpha_distributions)+'\n')

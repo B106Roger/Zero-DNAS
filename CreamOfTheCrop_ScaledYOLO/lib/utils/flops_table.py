@@ -174,8 +174,8 @@ class FlopsEst(object):
                                             raise ValueError(f"Invalid algorithm type {algorithm_type}")
                                         spatial_dimension = next_spatial_dimension
 
-                                        self.flops_dict[block_id][module_id][str(idx)] = flops / 1e6       # FLOPS(M)
-                                        self.params_dict[block_id][module_id][str(idx)] = params / 1e6     # Params(M)
+                                        self.flops_dict[block_id][module_id][f'{gamma}-{n_bottleneck}'] = flops / 1e6       # FLOPS(M)
+                                        self.params_dict[block_id][module_id][f'{gamma}-{n_bottleneck}'] = params / 1e6     # Params(M)
 
                                         # flops_dynamic += flops / 1e6
                                         # params_dynamic += params / 1e6
@@ -185,9 +185,9 @@ class FlopsEst(object):
                                 
 
                     max_param_arch_params += param_list[np.argmax(param_list)] # / 1e6
-                    max_param_arch_flops  += flops_list[np.argmax(param_list)] # / 1e6
+                    max_param_arch_flops  += flops_list[np.argmax(flops_list)] # / 1e6
                     min_param_arch_params += param_list[np.argmin(param_list)] # / 1e6
-                    min_param_arch_flops  += flops_list[np.argmin(param_list)] # / 1e6
+                    min_param_arch_flops  += flops_list[np.argmin(flops_list)] # / 1e6
                     
             # Compute Head FLOPs
             print('Computing head FLOPs...')

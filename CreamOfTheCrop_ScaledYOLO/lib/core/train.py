@@ -348,6 +348,7 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
     temperature = model.module.temperature if is_ddp else model.temperature
     mloss = torch.zeros(4, device=device)  # mean losses
     
+
     pbar = enumerate(dataloader)
     if local_rank in [-1, 0]:
         print(('%10s' * 14) % ('Epoch', 'gpu_mem', 'GIoU', 'obj', 'cls', 'total', 'targets', 'img_size', 'lr', 'moment', 'decay', 'temp', 'GFLOPS', 'f_loss'))
@@ -383,12 +384,25 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
                     x['momentum'] = w_momentum
             # print(f'w_lr: {w_lr}  w_momentum: {w_momentum}')
         
-        arch_theta = torch.cat([theta().reshape(1, -1) for theta in (model.module.thetas if is_ddp else model.thetas )], dim=0)
+        # arch_theta = torch.cat([theta().reshape(1, -1) for theta in (model.module.thetas if is_ddp else model.thetas )], dim=0)
+        # arch_theta = torch.cat([[theta() for theta in theta_module] for theta_module in (model.module.thetas if is_ddp else model.thetas )], dim=0)
+        
+        
         if is_gumbel:
-            gumbel_prob = nn.functional.gumbel_softmax(arch_theta, temperature, dim=-1)
+            # gumbel_prob = nn.functional.gumbel_softmax(arch_theta, temperature, dim=-1)
+            gumbel_prob = [
+                [nn.functional.gumbel_softmax(theta(), temperature) for theta in theta_module] 
+                    for theta_module in (model.module.thetas if is_ddp else model.thetas )
+            ]
+
         else:
-            gumbel_prob = nn.functional.softmax(arch_theta, dim=-1)
-            
+            # gumbel_prob = nn.functional.softmax(arch_theta, dim=-1)
+            gumbel_prob = [
+                [nn.functional.softmax(theta()) for theta in theta_module] 
+                    for theta_module in (model.module.thetas if is_ddp else model.thetas )
+            ]
+        
+        # print('gumbel_prob', gumbel_prob)
         # if (iter_idx + 1) % (iterations//3) == 0:
         #     logger.info(f'{prefix} proc({local_rank}/{world_size}). Theta Distribtuion in 1st stage ' + str(arch_theta[0].detach().cpu().numpy()))
         

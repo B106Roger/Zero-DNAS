@@ -69,24 +69,25 @@ task_dict = {
     'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},
     'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},  
     
+    'DNAS-S1-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3, 4], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
+    'DNAS-S1-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3, 4], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
+    'DNAS-S1-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3, 4], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
+    
     'NAS-SS': { 'GFLOPS': 5.7,  'PARAMS': 32.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS-S':  { 'GFLOPS': 7.0,  'PARAMS': 36.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS-M':  { 'GFLOPS': 9.0,  'PARAMS': 40.0, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS':    { 'GFLOPS': 11.9, 'PARAMS': 52.5, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS-L':  { 'GFLOPS': 16.5, 'PARAMS': 70.2, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
 }
-task_name = 'DNAS-25'
-FLOP_RESOLUTION = None
-TASK_FLOPS      = task_dict[task_name]['GFLOPS']     # e.g TASK_FLOPS  = 5  means 50 GFLOPs
-TASK_PARAMS     = task_dict[task_name]['PARAMS']     # e.g TASK_PARAMS = 32 means 32 million parameters.
-SEARCH_SPACES   = task_dict[task_name]['CHOICES']
+
 def main():
     args, cfg = parse_config_args('super net training')
-    # resolve logging
-    # output_dir = os.path.join(cfg.SAVE_PATH,
-    #                           "{}-{}".format(datetime.now().strftime('%m%d-%H:%M:%S'),
-    #                                          cfg.MODEL))
+    task_name = args.nas if args.nas != '' else 'DNAS-25'
+    TASK_FLOPS      = task_dict[task_name]['GFLOPS']     # e.g TASK_FLOPS  = 5  means 50 GFLOPs
+    TASK_PARAMS     = task_dict[task_name]['PARAMS']     # e.g TASK_PARAMS = 32 means 32 million parameters.
+    SEARCH_SPACES   = task_dict[task_name]['CHOICES']
     FLOP_RESOLUTION = (None, 3, cfg.search_resolution, cfg.search_resolution)
+    
     output_dir = os.path.join(cfg.SAVE_PATH, cfg.exp_name)
     output_bakup_dir = os.path.join(output_dir, 'config')
     config_backup(output_bakup_dir, args)

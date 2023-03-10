@@ -246,8 +246,7 @@ def parse_config_args(exp_name):
     parser.add_argument('--cfg', type=str,
                         default='../experiments/workspace/retrain/retrain.yaml',
                         help='configuration of cream')
-    parser.add_argument('--local_rank', type=int, default=0,
-                        help='local_rank')
+    parser.add_argument('--local_rank', type=int, default=0, help='local_rank')
     parser.add_argument('--exp_name', type=str, default='exp', help="name of experiments")
     parser.add_argument('--data', type=str, default='data/coco128.yaml', help='data.yaml path')
     parser.add_argument('--hyp', type=str, default='', help='hyperparameters path, i.e. data/hyp.scratch.yaml')
@@ -258,6 +257,8 @@ def parse_config_args(exp_name):
     parser.add_argument('--collect-samples', type=int, default=0, help='Sample a lot of different architectures with corresponding flops, if not 0 then samples specified number and exits the programm')
     parser.add_argument('--collect-synflows', type=int, default=0, help='Sample a lot of different architectures with corresponding synflows, if not 0 then samples specified number and exits the programm')
     parser.add_argument('--resume-theta-training', default='', type=str, help='load pretrained thetas')
+    parser.add_argument('--nas', default='', type=str, help='NAS-Search-Space and hardware constraint combination')
+    
     args = parser.parse_args()
 
     cfg.merge_from_file(args.cfg)

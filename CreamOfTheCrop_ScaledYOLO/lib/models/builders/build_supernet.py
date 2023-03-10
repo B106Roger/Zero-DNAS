@@ -40,7 +40,9 @@ class SuperNetBuilder:
         #                 for y in choices['n_bottlenecks']]
         # [Roger] Test Case
         # self.individual_choices = [[x, y] for x in choices['gamma'] for y in choices['n_bottlenecks']]
-        self.individual_choices = [[x] for x in choices['n_bottlenecks']]
+        # self.individual_choices = [[x] for x in choices['n_bottlenecks']]
+        self.individual_choices = [[max(choices['n_bottlenecks'])]]
+        
         self.search_space = deepcopy(choices)
         self.choices_num = len(self.individual_choices) - 1
         #######################################################################
