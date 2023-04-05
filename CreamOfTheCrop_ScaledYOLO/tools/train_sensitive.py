@@ -54,7 +54,7 @@ def config_backup(backup_path, args):
     shutil.copy(args.hyp,  os.path.join(backup_path, os.path.basename(args.hyp)))
     shutil.copy(args.data, os.path.join(backup_path, os.path.basename(args.data)))
     shutil.copy('lib/core/train.py', os.path.join(backup_path, 'core_train.py'))
-    shutil.copy('tools/train_dnas.py', os.path.join(backup_path, 'tools_train_dnas.py'))
+    shutil.copy(f'tools/{os.path.basename(__file__)}', os.path.join(backup_path, os.path.basename(__file__)))
     shutil.copy('lib/models/structures/supernet.py', os.path.join(backup_path, 'supernet.py'))
     shutil.copy('lib/models/blocks/yolo_blocks.py', os.path.join(backup_path, 'yolo_blocks.py'))
     shutil.copy('lib/models/builders/build_supernet.py', os.path.join(backup_path, 'build_supernet.py'))

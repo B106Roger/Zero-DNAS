@@ -185,9 +185,9 @@ class FlopsEst(object):
                                 
 
                     max_param_arch_params += param_list[np.argmax(param_list)] # / 1e6
-                    max_param_arch_flops  += flops_list[np.argmax(param_list)] # / 1e6
+                    max_param_arch_flops  += flops_list[np.argmax(flops_list)] # / 1e6
                     min_param_arch_params += param_list[np.argmin(param_list)] # / 1e6
-                    min_param_arch_flops  += flops_list[np.argmin(param_list)] # / 1e6
+                    min_param_arch_flops  += flops_list[np.argmin(flops_list)] # / 1e6
                     
             # Compute Head FLOPs
             print('Computing head FLOPs...')

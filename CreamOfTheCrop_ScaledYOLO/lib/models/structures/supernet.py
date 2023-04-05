@@ -303,7 +303,9 @@ class SuperNet(nn.Module):
         # Pass data through stem
         # print('Initial shape:', x.shape)
         if distributions is None:
+            # arch_theta = torch.cat([theta().reshape(1, -1) for theta in (model.module.thetas if is_ddp else model.thetas )], dim=0)
             distributions = torch.cat([theta().reshape(1, -1) for theta in self.thetas], dim=0)
+            # distributions = distributions.detach() / self.temperature
             distributions = distributions.detach()
             distributions = nn.functional.softmax(distributions, dim=-1)
         
@@ -342,10 +344,11 @@ class SuperNet(nn.Module):
                         soft_mask_variables = distributions[current_theta]
                         # print(f'{current_theta:2d} candidate layer: {soft_mask_variables.detach().cpu().numpy()}')
                         gamma_length = len(self.search_space['gamma'])
+                        depth_length = len(self.search_space['n_bottlenecks'])
                         current_operation = 0
                         operators_outputs = []
                         for depth_idx, op in enumerate(blocks):
-                            gamma_raw_dist = [soft_mask_variables[depth_idx + gamma_idx * gamma_length] for gamma_idx in range(gamma_length)]
+                            gamma_raw_dist = [soft_mask_variables[depth_idx + gamma_idx * depth_length] for gamma_idx in range(gamma_length)]
                             depth_dist = sum(gamma_raw_dist)
                             gamma_list = [gamma_prob / depth_dist for gamma_prob in gamma_raw_dist]
                             args = {

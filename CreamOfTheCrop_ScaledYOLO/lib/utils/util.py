@@ -17,6 +17,27 @@ from timm.utils import *
 from lib.config import cfg
 from lib.utils.general import non_max_suppression, clip_coords, xywh2xyxy, box_iou, ap_per_class
 
+import io
+
+class TqdmToLogger(io.StringIO):
+    """
+        Output stream for TQDM which will output to logger module instead of
+        the StdOut.
+    """
+    logger = None
+    level = None
+    buf = ''
+    def __init__(self,logger,level=None):
+        super(TqdmToLogger, self).__init__()
+        self.logger = logger
+        self.level = level or logging.INFO
+    def write(self,buf):
+        self.buf = buf.strip('\r\n\t ')
+    def flush(self):
+        self.logger.log(self.level, self.buf)
+    def info(self, *args):
+        self.logger.info(*args)
+
 
 def get_path_acc(model, path, val_loader, args, val_iters=50):
     prec1_m = AverageMeter()
@@ -57,10 +78,10 @@ def get_logger(file_path):
     """ Make python logger """
     log_format = '%(asctime)s | %(message)s'
     logging.basicConfig(stream=sys.stdout, level=logging.INFO,
-                        format=log_format, datefmt='%m/%d %I:%M:%S %p')
+                        format=log_format, datefmt='%m/%d %I:%M %p')
     logger = logging.getLogger('')
 
-    formatter = logging.Formatter(log_format, datefmt='%m/%d %I:%M:%S %p')
+    formatter = logging.Formatter(log_format, datefmt='%m/%d %I:%M %p')
     file_handler = logging.FileHandler(file_path)
     file_handler.setFormatter(formatter)
 

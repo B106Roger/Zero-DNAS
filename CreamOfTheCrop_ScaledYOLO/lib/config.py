@@ -93,6 +93,10 @@ __C.DECAY_RATE = 0.1
 __C.LR = 1e-2
 __C.LR_NOISE = None
 __C.META_LR = 1e-4
+__C.FREEZE_EPOCH = 40
+__C.TEMPERATURE = CN()
+__C.TEMPERATURE.INIT= 5.0
+__C.TEMPERATURE.FINAL=0.1
 
 # data augmentation parameters
 __C.AUGMENTATION = CN()

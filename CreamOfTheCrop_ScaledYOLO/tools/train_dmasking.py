@@ -32,7 +32,7 @@ except ImportError:
 
 # import models and training functions
 from lib.utils.flops_table import FlopsEst
-from lib.core.train import train_epoch, validate, train_epoch_dnas
+from lib.core.train import train_epoch, validate, train_epoch_dnas, train_epoch_dnas_V2
 from lib.models.structures.supernet import gen_supernet
 from lib.models.PrioritizedBoard import PrioritizedBoard
 from lib.models.MetaMatchingNetwork import MetaMatchingNetwork
@@ -54,7 +54,7 @@ def config_backup(backup_path, args):
     shutil.copy(args.hyp,  os.path.join(backup_path, os.path.basename(args.hyp)))
     shutil.copy(args.data, os.path.join(backup_path, os.path.basename(args.data)))
     shutil.copy('lib/core/train.py', os.path.join(backup_path, 'core_train.py'))
-    shutil.copy('tools/train_dnas.py', os.path.join(backup_path, 'tools_train_dnas.py'))
+    shutil.copy(f'tools/{os.path.basename(__file__)}', os.path.join(backup_path, os.path.basename(__file__)))
     shutil.copy('lib/models/structures/supernet.py', os.path.join(backup_path, 'supernet.py'))
     shutil.copy('lib/models/blocks/yolo_blocks.py', os.path.join(backup_path, 'yolo_blocks.py'))
     shutil.copy('lib/models/builders/build_supernet.py', os.path.join(backup_path, 'build_supernet.py'))
@@ -65,17 +65,22 @@ def config_backup(backup_path, args):
         f.writelines(' '.join(sys.argv))
     
 task_dict = {
-    'DNAS-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},
+    'DNAS-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},    
     'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},
     'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},  
     
+    'DNAS-25-No-Depth':     { 'GFLOPS': 25,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0], 'gamma': [0.25, 0.50, 0.75]}},
+
+
     'NAS-SS': { 'GFLOPS': 5.7,  'PARAMS': 32.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS-S':  { 'GFLOPS': 7.0,  'PARAMS': 36.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS-M':  { 'GFLOPS': 9.0,  'PARAMS': 40.0, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS':    { 'GFLOPS': 11.9, 'PARAMS': 52.5, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
     'NAS-L':  { 'GFLOPS': 16.5, 'PARAMS': 70.2, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
 }
-task_name = 'DNAS-35'
+# task_name = 'DNAS-25-No-Depth'
+task_name = 'DNAS-25'
+
 FLOP_RESOLUTION = None
 TASK_FLOPS      = task_dict[task_name]['GFLOPS']     # e.g TASK_FLOPS  = 5  means 50 GFLOPs
 TASK_PARAMS     = task_dict[task_name]['PARAMS']     # e.g TASK_PARAMS = 32 means 32 million parameters.
@@ -139,7 +144,7 @@ def main():
         slice=cfg.SUPERNET.SLICE,
         verbose=cfg.VERBOSE,
         logger=logger,
-        init_temp=5.0)
+        init_temp=cfg.TEMPERATURE.INIT)
     
     # print(model)
     # initialize meta matching networks
@@ -222,8 +227,6 @@ def main():
     with open(args.hyp) as f:
         hyp = yaml.load(f, Loader=yaml.FullLoader)  # load hyps
 
-    
-
     # Trainloader
     with open(args.data) as f:
         data_dict = yaml.load(f, Loader=yaml.FullLoader)  # model dict
@@ -284,36 +287,41 @@ def main():
         #     checkpoint_dir=output_dir,
         #     decreasing=decreasing)
 
+
+    #############################################################
+    # Resume Training
+    #############################################################
+    # model.load_state_dict(torch.load('./experiments/workspace/train/YOLO-DMaskingChannel-DNAS-25-V2-decay2-02/model_40.pt'))
+    # start_epoch = 40
+    # for i in range(start_epoch): lr_scheduler.step()
+
     # training scheme
-    FREEZE_EPOCH=40
+    print('Task Flop', TASK_FLOPS)
+    print('freeze epoch', cfg.FREEZE_EPOCH)
     try:
         write_thetas(output_dir, model.module.thetas_main if is_parallel(model) else model.thetas_main, -1)
         torch.save(model.state_dict(), os.path.join(output_dir, f'model_0.pt'))
-        for epoch in range(1, num_epochs+1):
+        for epoch in range(start_epoch, num_epochs+1):
             model.train()
-            thetas_enable = False if epoch <= FREEZE_EPOCH else True
+
+            train_epoch_dnas_V2(model, dataloader_weight, dataloader_thetas, optimizer, theta_optimizer, cfg, device=device, 
+                             task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
+                             est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
+                             epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema
+                            )
+
+            thetas_enable = False if epoch <= cfg.FREEZE_EPOCH else True
             if not thetas_enable:
-                train_epoch_dnas(model, dataloader_weight, optimizer, cfg, device=device, 
-                                 task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
-                                 est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
-                                 epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=False, ema=ema
-                                )
-                if epoch == FREEZE_EPOCH:
+                if epoch == cfg.FREEZE_EPOCH:
                     torch.save(model.state_dict(), os.path.join(output_dir, f'model_40.pt'))
             else:
-                train_epoch_dnas(model, dataloader_weight, optimizer, cfg, device=device, 
-                                task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
-                                est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
-                                epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema
-                                )
-                train_epoch_dnas(model, dataloader_thetas, theta_optimizer, cfg, device=device, 
-                                task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
-                                est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
-                                epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema
-                                )
-                
                 if thetas_enable:
-                    temp_decay = np.exp(-0.065)
+                    # temp_decay = np.exp(-0.045) # 0.9560
+                    # temp_decay = 0.2**(1/80)    # 0.9800
+                    temp_decay = (0.2 * cfg.TEMPERATURE.FINAL)**(1/(num_epochs-cfg.FREEZE_EPOCH)) # 0.9560
+
+
+
                     print('Decreasing temperature!')
                     if is_parallel(model):
                         model.module.temperature = model.module.temperature * temp_decay
