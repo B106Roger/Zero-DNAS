@@ -86,6 +86,8 @@ class Model(nn.Module):
         # Init weights, biases
         initialize_weights(self)
         self.resolution = resolution
+        # self.resolution = 416
+        
         self.info()
         print('')
 
@@ -167,6 +169,7 @@ class Model(nn.Module):
         return self
 
     def info(self):  # print model information
+        return
         print('[Info] Model Resolution', self.resolution)
         model_info(self, resolution=self.resolution)
         model_info(self, resolution=(640,640))

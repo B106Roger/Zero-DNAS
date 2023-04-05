@@ -140,7 +140,10 @@ def model_info(model, verbose=False, resolution = (224, 224)):
         flops = profile(deepcopy(model), inputs=(torch.zeros(1, 3, resolution[0], resolution[1]),), verbose=False)[0] / 1E9 * 2
         fs = f', {flops:.1f} GFLOPS  Resolution: {resolution}'   # 640x640 FLOPS
     except:
-        fs = ''
+        # fs = ''
+        from thop import profile
+        flops = profile(deepcopy(model), inputs=(torch.zeros(1, 3, resolution[0], resolution[1]),), verbose=False)[0] / 1E9 * 2
+        fs = f', {flops:.1f} GFLOPS  Resolution: {resolution}'   # 640x640 FLOPS
 
     print('Model Summary: %g layers, %g parameters, %g gradients%s' % (len(list(model.parameters())), n_p, n_g, fs))
     return_obj = {

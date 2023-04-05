@@ -125,6 +125,7 @@ class BottleneckCSP2(nn.Module):
             self.m = nn.Sequential(*[Bottleneck(c_h, c_h, shortcut, g, e=1.0) for _ in range(n)])
 
     def forward(self, x):
+        # self.search_type = 0
         if self.search_type == 0 or self.search_type == 1:
             x1 = self.cv1(x)
             y1 = self.m(x1)
