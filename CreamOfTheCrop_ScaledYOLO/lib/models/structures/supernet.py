@@ -152,13 +152,21 @@ class SuperNet(nn.Module):
         self.stride = self.yolo_detector.stride
         
         # [Roger]
-        algorithm_type = get_algorithm_type()
-        if algorithm_type == 'ZeroDNAS_Egor':
-            efficientnet_init_weights(self)
-        elif algorithm_type == 'DNAS' or algorithm_type =='ZeroCost':
-            self._initialize_weights(True)
+        DEBUG=True
+        if not DEBUG:
+            algorithm_type = get_algorithm_type()
+            if algorithm_type == 'ZeroDNAS_Egor':
+                efficientnet_init_weights(self)
+            elif algorithm_type == 'DNAS' or algorithm_type =='ZeroCost':
+                self._initialize_weights(True)
+            else:
+                raise ValueError(f"Invalid algorithm type {algorithm_type}")
         else:
-            raise ValueError(f"Invalid algorithm type {algorithm_type}")
+            # self._initialize_efficientnet() # efficientnet_init_weights(self) &  self._initialize_detector_bias()
+            # self._initialize_weights(True)
+            # self._initialize_detector_bias()
+            pass
+            
 
     def get_classifier(self):
         return self.classifier
@@ -542,6 +550,7 @@ class SuperNet(nn.Module):
         self._initialize_detector_bias()
         # Initialize Backbone
         for m in self.modules():
+            print('m = ', m )
             t = type(m)
             if t is nn.Conv2d:
                 if first: continue

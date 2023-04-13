@@ -17,6 +17,8 @@ from lib.utils.util import *
 from lib.utils.general import compute_loss, test, plot_images, is_parallel, build_foreground_mask, compute_sensitive_loss
 from lib.utils.kd_utils import compute_loss_KD
 from lib.utils.synflow import sum_arr_tensor
+from lib.zero_proxy import snip
+
 
 def get_device_info():
     print('--------------GPU Info -------------------')

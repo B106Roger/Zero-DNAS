@@ -393,5 +393,6 @@ def efficientnet_init_weights(
 
     init_fn = init_fn or init_weight_goog
     for n, m in model.named_modules():
+        print(f'm={m} n={n}')
         init_fn(m, n, last_bn=last_bn)
         init_fn(m, n, last_bn=last_bn)

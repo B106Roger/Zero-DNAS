@@ -23,8 +23,7 @@ from scipy.cluster.vq import kmeans
 from scipy.signal import butter, filtfilt
 from tqdm import tqdm
 
-from lib.utils.torch_utils import init_seeds, is_parallel
-from utils.torch_utils import select_device, time_synchronized
+from lib.utils.torch_utils import init_seeds, is_parallel, select_device, time_synchronized
 
 # Set printoptions
 torch.set_printoptions(linewidth=320, precision=5, profile='long')
@@ -442,6 +441,21 @@ class BCEBlurWithLogitsLoss(nn.Module):
         return loss.mean()
 
 def compute_loss(p, targets, model, logger=None):  # predictions, targets, model
+    """
+    ****************************************************************************************************
+    p[0] torch.Size([8, 3, 52, 52, 25])
+    p[1] torch.Size([8, 3, 26, 26, 25])
+    p[2] torch.Size([8, 3, 13, 13, 25])
+    targets torch.Size([36, 6])
+    s 1.0
+    (1.4 if np >= 4 else 1.)= 1.0
+    bs 8
+    ****************************************************************************************************
+    Return
+    ------
+    loss : torch.tensor([loss_value])
+    
+    """
     device = targets.device
     # print('targets:', targets.shape)
     # print([pr.shape for pr in p]) 
