@@ -575,7 +575,7 @@ def compute_sensitive_loss(p, p_aug, targets, masks):
 
 def build_targets(p, targets, model, logger=None):
     # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
-    det = model.module.yolo_detector if is_parallel(model) else model.yolo_detector  # Detect() module
+    det = model.module.blocks[-1] if is_parallel(model) else model.blocks[-1]  # Detect() module
     na, nt = det.na, targets.shape[0]  # number of anchors, targets
     tcls, tbox, indices, anch = [], [], [], []
     gain = torch.ones(7, device=targets.device)  # normalized to gridspace gain

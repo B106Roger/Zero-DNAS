@@ -412,7 +412,9 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
         pred = model.module(imgs, gumbel_prob) if is_ddp else model(imgs, gumbel_prob)
         
 
-        det_loss, loss_items = compute_loss(pred[0][1], targets.to(device), model)  # scaled by batch_size
+        # det_loss, loss_items = compute_loss(pred[0][1], targets.to(device), model)  # scaled by batch_size
+        print('pred', pred)
+        det_loss, loss_items = compute_loss(pred, targets.to(device), model)  # scaled by batch_size
         det_loss = det_loss[0]
         
         architecture_info = {

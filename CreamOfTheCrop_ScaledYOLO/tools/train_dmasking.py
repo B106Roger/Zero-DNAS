@@ -155,7 +155,7 @@ def main():
         logger.info('choice number: %d', (choice_num))
 
     #initialize prioritized board
-    prioritized_board = PrioritizedBoard(cfg, CHOICE_NUM=choice_num, sta_num=sta_num, acc_gap=0.06)
+    # prioritized_board = PrioritizedBoard(cfg, CHOICE_NUM=choice_num, sta_num=sta_num, acc_gap=0.06)
     # print(model.blocks[1])
     prunable_module_type = (nn.BatchNorm2d, )
     prunable_modules = []

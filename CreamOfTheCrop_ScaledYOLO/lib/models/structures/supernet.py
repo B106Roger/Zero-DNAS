@@ -23,7 +23,9 @@ from timm.models.layers import SelectAdaptivePool2d
 from timm.models.layers.activations import hard_sigmoid
 from lib.utils.kd_utils import FeatureAdaptation
 from lib.utils.synflow import synflow, sum_arr, sum_arr_tensor
+from lib.utils.general import check_anchor_order
 import math
+import yaml
 class Theta(nn.Module):
     def __init__(self, parameters):
         super(Theta, self).__init__()
@@ -36,7 +38,7 @@ class SuperNet(nn.Module):
 
     def __init__(
             self,
-            block_args,
+            model_args,
             choices,
             num_classes=1000,
             in_chans=3,
@@ -59,7 +61,7 @@ class SuperNet(nn.Module):
             verbose=False,
             init_temp=3):
         super(SuperNet, self).__init__()
-
+        block_args = model_args['backbone'] + model_args['head']
         self.num_classes = num_classes
         self.num_features = num_features
         self.drop_rate = drop_rate
@@ -95,61 +97,45 @@ class SuperNet(nn.Module):
         self._in_chs = stem_size
 
         # Middle stages (IR/ER/DS Blocks)
-        builder = SuperNetBuilder(
-            choices,
-            channel_multiplier,
-            8,
-            None,
-            32,
-            pad_type,
-            act_layer,
-            se_kwargs,
-            norm_layer,
-            norm_kwargs,
-            drop_path_rate,
-            verbose=verbose,
-            resunit=resunit,
-            dil_conv=dil_conv,
-            logger=self.logger)
-        self.blocks, self.save = builder(self._in_chs, block_args) # build middle stages
-        self._in_chs = builder.in_chs
+        # builder = SuperNetBuilder(
+        #     choices,
+        #     channel_multiplier,
+        #     8,
+        #     None,
+        #     32,
+        #     pad_type,
+        #     act_layer,
+        #     se_kwargs,
+        #     norm_layer,
+        #     norm_kwargs,
+        #     drop_path_rate,
+        #     verbose=verbose,
+        #     resunit=resunit,
+        #     dil_conv=dil_conv,
+        #     logger=self.logger)
+        # self.blocks, self.save = builder(self._in_chs, block_args) # build middle stages
+        
+        self.blocks, self.save = parse_model(model_args, ch=[in_chans])  # model, savelist, ch_out
+        # Build strides, anchors
+        m = self.blocks[-1]  # Detect()
+        if isinstance(m, Detect):
+            s = 256  # 2x min stride
+            m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, in_chans, s, s))  ])  # forward
+            m.anchors /= m.stride.view(-1, 1, 1)
+            check_anchor_order(m)
+            self.stride = m.stride
+            self._initialize_detector_bias()  # only run once
+            # print('Strides: %s' % m.stride.tolist())
+            
+        # self._in_chs = builder.in_chs
 
         self.K = 0
-        # Head + Pooling
-        # self.global_pool = SelectAdaptivePool2d(pool_type=global_pool)
-        # self.conv_head = create_conv2d(
-        #     self._in_chs,
-        #     self.num_features,
-        #     1,
-        #     padding=pad_type,
-        #     bias=head_bias)
-        # self.act2 = act_layer(inplace=True) if isinstance(act_layer, nn.ReLU) else act_layer()
-
-        # Classifier
-        # self.classifier = nn.Linear(
-        #     self.num_features *
-        #     self.global_pool.feat_mult(),
-        #     self.num_classes)
-        
-        self.yolo_detector = Detect(
-            nc=self.num_classes,
-            anchors=(
-                [12,16, 19,36, 40,28],  # P3/8
-                [36,75, 76,55, 72,146],  # P4/16
-                [142,110, 192,243, 459,401]),
-            ch=(256, 512, 1024)
-        )
 
         # Build strides, anchors
         random_cand = [[0], [0], [0], [0], [0], [0], [0], [0], [0], [0], [0], [0, 0, 0], [0], [0], [0, 0, 0], [0], [0], [0], [0], [0], [0], [0], [0], [0], [0], [0]]
         # s = 256  # 2x min stride
-        s = 256  # 2x min stride
+        # s = 256  # 2x min stride
         
-        forward_once, _, _ = self.forward(torch.zeros(1, 3, s, s), random_cand, first_run=True)
-        self.yolo_detector.stride = torch.tensor([s / x.shape[-2] for x in forward_once])  # forward
-        self.yolo_detector.anchors /= self.yolo_detector.stride.view(-1, 1, 1)
-        # check_anchor_order(m)
-        self.stride = self.yolo_detector.stride
         
         # [Roger]
         DEBUG=True
@@ -323,95 +309,42 @@ class SuperNet(nn.Module):
                     for theta_module in self.thetas
             ]
         
-        y = []
-        x = self.conv_stem(x)
-        x = self.bn1(x)
-        x = self.act1(x)
-        
-        chosen_subnet = ''
-        current_theta = 0
-        # print('Shape after stem:', x.shape)    
-        # Pass data through chosen subnet
-        block_id = 0
-        for layer in self.blocks:           
-            num_of_choice_blocks = len(layer)
-            # layer => <class 'torch.nn.modules.container. ModuleList'> 
-            # print(f'[Roger] SuperNet.forward_features_confinuous block_id: {block_id:02d} choices: {num_of_choice_blocks}')
-            # print(f'[Roger] \tlayer_arch: {[item for item in layer_arch]}')
-            # print(f'[Roger] \tlayer type: {type(layer)}')
-            
-            for blocks in layer:
-                # blocks => <class 'torch.nn.modules.container.ModuleList'>
-                # print(f'[Roger] \t\tblocks type: {type(blocks)}')
+        y, dt = [], []  # outputs
+        profile = False
+        for idx, m in enumerate(self.blocks):
+            if m.f != -1:  # if not from previous layer
+                x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
 
-                chosen_block = blocks[0]
-                # print(chosen_subnet)
-                if chosen_block.block_args.get('from_concat') != None:
-                    f = chosen_block.block_args.get('from_concat')
-                    x = y[f] if isinstance(f, int) else [x if j == -1 else y[j] for j in f]  
-                                  
-                if (isinstance(chosen_block, BottleneckCSP) or isinstance(chosen_block, BottleneckCSP2)):
-                    if not first_run:
-                        soft_mask_variables = distributions[current_theta]
-                        args = {}
-                        for key, val in zip(keys, soft_mask_variables):
-                            args[key] = val 
-                        args['n_bottlenecks_val'] = self.search_space['n_bottlenecks']
+            if profile:
+                try:
+                    import thop
+                    o = thop.profile(m, inputs=(x,), verbose=False)[0] / 1E9 * 2  # FLOPS
+                except:
+                    o = 0
+                t = time_synchronized()
+                for _ in range(10):
+                    _ = m(x)
+                dt.append((time_synchronized() - t) * 100)
+                print('%10.1f%10.0f%10.1fms %-40s' % (o, m.np, dt[-1], m.type))
 
-                        for blk_idx, op in enumerate(blocks):
-                            x = op(x, args=args)
-                        # gamma_length = len(self.search_space['gamma'])
-                        # current_operation = 0
-                        # operators_outputs = []
-                        # for depth_idx, op in enumerate(blocks):
-                        #     # same depth, but different gamma distribution
-                        #      b = [soft_mask_variables[depth_idx + gamma_idx * gamma_length] for gamma_idx in range(gamma_length)]
-                        #     # the probability to choose the depth
-                        #     depth_dist = sum(gamma_raw_dist)
-                        #     # the probability to choose the gamma under certain depth
-                        #     gamma_list = [gamma_prob / depth_dist for gamma_prob in gamma_raw_dist]
-                        #     args = {
-                        #         'gamma_dist' : gamma_list,
-                        #         'depth_dist' : ,
-                        #         'depth_val'  : self.search_space['n_bottlenecks'], 
-                        #     }
-                            
-                        #     operators_outputs.append(op(x, args=args) * depth_dist)
-                        # x = sum(operators_outputs)
-                    else:
-                        n_bottlenecks = self.hetero_choices[-1]
-                        x = chosen_block(x, n_bottlenecks)
-                    
-                    current_theta += 1
-                else:
-                    x = chosen_block(x)
-                   
-                # print(f'Shape after {chosen_block.get_block_name()}:', x.shape)
-                y.append(x if chosen_block.i in self.save else None)
-                
-                if chosen_block.block_args.get('last') != None:
-                    x = [y[j] for j in [21, 25, 29]]
-                    # print('trigger last')
-                    # for xi, xx in enumerate(x):
-                    #     print(f'{xi}-th feature map : {xx.shape}')
-            block_id += 1
+            if idx == 31:
+                for xx in x:
+                    print(xx.shape)
+            x = m(x)  # run
+            y.append(x if m.i in self.save else None)  # save output
 
-        feature_out = []
-        # print('pass to yolo-detector')
-        x = self.yolo_detector(x, first_run, calc_metric)
-        # print('Final shape:', [out.shape for out in x])
+        if profile:
+            print('%.1fms total' % sum(dt))
+
         chosen_subnet = [None]
-        return x, feature_out, chosen_subnet
+        return x, y, chosen_subnet
 
 
     def forward(self, x, architecture=None, first_run=False, calc_metric=False):
         x, feature_out, chosen_subnet = self.forward_features_confinuous(x, architecture, first_run=first_run, calc_metric=calc_metric)
-        # x, feature_out, chosen_subnet = self.forward_features_confinuous(x, architecture, first_run=first_run, calc_metric=calc_metric)
-        # x = x.flatten(1)
-        # if self.drop_rate > 0.:
-        #     x = F.dropout(x, p=self.drop_rate, training=self.training)
-        # return self.classifier(x), chosen_subnet[:-2]
-        return x, feature_out, chosen_subnet[:-2]
+
+        
+        return x #, feature_out, chosen_subnet[:-2]
 
     def calculate_flops(self, architecture, flops_dict, overall_flops, first_run=False, calc_metric=False):
         current_theta = 0
@@ -528,7 +461,7 @@ class SuperNet(nn.Module):
 
     def _initialize_detector_bias(self):
         # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1.
-        m = self.yolo_detector  # Detect() module
+        m = self.blocks[-1]  # Detect() module
         cf=None
         for mi, s in zip(m.m, m.stride):  # from
             b = mi.bias.view(m.na, -1)  # conv.bias(255) to (3,85)
@@ -885,55 +818,53 @@ class SuperNet(nn.Module):
         current_theta = 0
         block_id = 0
         overall_flops = 0
-        for layer_idx, layer in enumerate(self.blocks):            
-            for block_idx, blocks in enumerate(layer):
+        for block_idx, block in enumerate(self.blocks):         
+            block_idx = str(block_idx)
+            # for block_idx, blocks in enumerate(layer):
                 
-                # [Discrete Mode] use architecture to sample subnetwork to do inference
-                if architecture_type == 'discrete':
-                    arch=architecture[layer_idx][block_idx]
-                    if arch == -1: 
-                        continue
-                    else:
-                        chosen_block_idx = arch // 4
-                        n_bottlenecks = arch % 4
+            # [Discrete Mode] use architecture to sample subnetwork to do inference
+            if architecture_type == 'discrete':
+                arch=architecture[layer_idx][block_idx]
+                if arch == -1: 
+                    continue
+                else:
+                    chosen_block_idx = arch // 4
+                    n_bottlenecks = arch % 4
                     
-                    # Determine which block to use in nn.MoudleList
-                    chosen_block = blocks[0]
-                    # [Block Inference]
-                    if (isinstance(chosen_block, BottleneckCSP) or isinstance(chosen_block, BottleneckCSP2)):
-                        overall_flops = overall_flops + flops_dict[str(block_id)]['0'][str(arch)]
-                    else:
-                        overall_flops = overall_flops + flops_dict[str(block_id)]['0']['0']
+                # Determine which block to use in nn.MoudleList
+                chosen_block = blocks[0]
+                # [Block Inference]
+                if (isinstance(chosen_block, BottleneckCSP) or isinstance(chosen_block, BottleneckCSP2)):
+                    overall_flops = overall_flops + flops_dict[str(block_id)]['0'][str(arch)]
+                else:
+                    overall_flops = overall_flops + flops_dict[str(block_id)]['0']['0']
                         
-                # [Continuous Mode] use architecture distribtuion and weighted-sum their output to do inference
-                elif architecture_type == 'continuous':
-                    chosen_block = blocks[0]
-                    if (isinstance(chosen_block, BottleneckCSP) or isinstance(chosen_block, BottleneckCSP2)):
-                        # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
-                        soft_mask_variables = architecture[current_theta]
-
-                        args = {}
-                        for key, val in zip(keys, soft_mask_variables):
-                            args[key] = val 
-                        args['n_bottlenecks_val'] = self.search_space['n_bottlenecks']
-                        # print(args)
-
-                        operators_flops = 0
-                        for g_idx, gamma in enumerate(self.search_space['gamma']):
-                            for n_idx, n_bottleneck in enumerate(self.search_space['n_bottlenecks']):
-                                operator_flops = flops_dict[str(block_id)]['0'][f'{gamma}-{n_bottleneck}']
-                                operators_flops = operators_flops + (operator_flops * args['gamma'][g_idx] * args['n_bottlenecks'][n_idx])
-
-                        # for current_operation in range(len(soft_mask_variables)):
-                        #     operator_flops = flops_dict[str(block_id)]['0'][str(current_operation)]
-                        #     operators_flops = operators_flops + (operator_flops * soft_mask_variables[current_operation])
-
-                        overall_flops = overall_flops + (operators_flops)
-                        current_theta += 1
-                    else:
-                        overall_flops = overall_flops + flops_dict[str(block_id)]['0']['0']
+            # [Continuous Mode] use architecture distribtuion and weighted-sum their output to do inference
+            elif architecture_type == 'continuous':
+                if 'Search' in block.__class__.__name__:
+                    # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
+                    soft_mask_variables = architecture[current_theta]
+                    
+                    options, search_keys = block.generate_options()
+                    for option in options:
+                        prob = 1.0
+                        query_keys = []
+                        for key_idx, key in enumerate(search_keys):
+                            index = option[key_idx]
+                            value = block.search_space[key][index]
+                            query_keys.append(f'{key}{value}')
+                            prob *= soft_mask_variables[key_idx][index]
+                            
+                        
+                        query_key      = '-'.join(query_keys)
+                        choice_flops = flops_dict[block_idx][query_key]
+                    
+                        overall_flops = overall_flops + choice_flops * prob
+                    current_theta += 1
+                else:
+                    overall_flops = overall_flops + flops_dict[str(block_id)]['0']
             
-            block_id += 1
+            # block_id += 1
         overall_flops += flops_dict['flops_fixed']
         return overall_flops
     
@@ -952,53 +883,49 @@ class SuperNet(nn.Module):
         current_theta = 0
         block_id = 0
         overall_params = 0
-        for layer_idx, layer in enumerate(self.blocks):            
-            for block_idx, blocks in enumerate(layer):
-                
-                # [Discrete Mode] use architecture to sample subnetwork to do inference
-                if architecture_type == 'discrete':
-                    arch=architecture[layer_idx][block_idx]
-                    if arch == -1: 
-                        continue
-                    else:
-                        chosen_block_idx = arch // 4
-                        n_bottlenecks = arch % 4
+        for block_idx, block in enumerate(self.blocks):            
+            block_idx = str(block_idx)
+            # [Discrete Mode] use architecture to sample subnetwork to do inference
+            if architecture_type == 'discrete':
+                arch=architecture[layer_idx][block_idx]
+                if arch == -1: 
+                    continue
+                else:
+                    chosen_block_idx = arch // 4
+                    n_bottlenecks = arch % 4
                     
-                    # Determine which block to use in nn.MoudleList
-                    chosen_block = blocks[0]
-                    # [Block Inference]
-                    if (isinstance(chosen_block, BottleneckCSP) or isinstance(chosen_block, BottleneckCSP2)):
-                        overall_params = overall_params + params_dict[str(block_id)]['0'][str(arch)]
-                    else:
-                        overall_params = overall_params + params_dict[str(block_id)]['0']['0']
+                # Determine which block to use in nn.MoudleList
+                chosen_block = blocks[0]
+                # [Block Inference]
+                if (isinstance(chosen_block, BottleneckCSP) or isinstance(chosen_block, BottleneckCSP2)):
+                    overall_params = overall_params + params_dict[str(block_id)]['0'][str(arch)]
+                else:
+                    overall_params = overall_params + params_dict[str(block_id)]['0']['0']
                         
-                # [Continuous Mode] use architecture distribtuion and weighted-sum their output to do inference
-                elif architecture_type == 'continuous':
-                    chosen_block = blocks[0]
-                    if (isinstance(chosen_block, BottleneckCSP) or isinstance(chosen_block, BottleneckCSP2)):
-                        # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
-                        soft_mask_variables = architecture[current_theta]
-
-                        args = {}
-                        for key, val in zip(keys, soft_mask_variables):
-                            args[key] = val 
-                        args['n_bottlenecks_val'] = self.search_space['n_bottlenecks']
-                        # print(args)
+            # [Continuous Mode] use architecture distribtuion and weighted-sum their output to do inference
+            elif architecture_type == 'continuous':
+                if 'Search' in block.__class__.__name__:
+                    # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
+                    soft_mask_variables = architecture[current_theta]
                         
-                        operators_params = 0
-                        for g_idx, gamma in enumerate(self.search_space['gamma']):
-                            for n_idx, n_bottleneck in enumerate(self.search_space['n_bottlenecks']):
-                                operator_params = params_dict[str(block_id)]['0'][f'{gamma}-{n_bottleneck}']
-                                operators_params = operators_params + (operator_params * args['gamma'][g_idx] * args['n_bottlenecks'][n_idx])
+                    options, search_keys = block.generate_options()
+                    for option in options:
+                        prob = 1.0
+                        query_keys = []
+                        for key_idx, key in enumerate(search_keys):
+                            index = option[key_idx]
+                            value = block.search_space[key][index]
+                            query_keys.append(f'{key}{value}')
+                            prob *= soft_mask_variables[key_idx][index]
+                            
+                        
+                        query_key      = '-'.join(query_keys)
+                        choice_params = params_dict[block_idx][query_key]
 
-                        # for current_operation in range(soft_mask_variables):
-                        #     operator_params = params_dict[str(block_id)]['0'][str(current_operation)]
-                        #     operators_params = operators_params + (operator_params * soft_mask_variables[current_operation])
-
-                        overall_params = overall_params + (operators_params)
-                        current_theta += 1
-                    else:
-                        overall_params = overall_params + params_dict[str(block_id)]['0']['0']
+                        overall_params = overall_params + choice_params * prob
+                    current_theta += 1
+                else:
+                    overall_params = overall_params + params_dict[str(block_id)]['0']
             
             block_id += 1
         overall_params += params_dict['params_fixed']
@@ -1074,75 +1001,82 @@ def gen_supernet(flops_minimum=0, flops_maximum=600, choices=None, **kwargs):
         print('choices is none !! please use correct choices')
     # choices = {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]} # big
     # choices = {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]} # tiny
+    model_config = 'Search-YOLOv4-CSP.yaml'
+    with open(model_config ) as f:
+        model_args   = yaml.load(f, Loader=yaml.FullLoader)
+    search_space = model_args['search_space']
+    blocks_args     = model_args['backbone'] + model_args['head']
+    
 
-
+    # exit()
     #1 4 0 0
     # act_layer = HardSwish
     act_layer = nn.ReLU
 
-    arch_def = [
-        # 
-        # Backbone
-        # stage 0
-        ['cn_r1_k3_s2_cin32_cout64'],
-        # stage 1
-        ['bottle_r1_k1_s1_cin64_cout64'], # BottleNeck [64]
-        # stage 2
-        ['cn_r1_k3_s2_cin64_cout128'],
-        # stage 3
-        ['bottlecsp_r1_k1_s1_num2_gamma0.5_cin128_cout128'],  # BottleNeck [128]
-        # stage 4
-        ['cn_r1_k3_s2_cin128_cout256'],
-        # stage 5
-        ['bottlecsp_r1_k1_s1_num8_gamma0.5_cin256_cout256'], #BottleNeck [256]
-        # stage 6
-        ['cn_r1_k3_s2_cin256_cout512'],
-        # stage 7
-        ['bottlecsp_r1_k1_s1_num8_gamma0.5_cin512_cout512'], # BottleNeckCSP [512]
-        # stage 8
-        ['cn_r1_k3_s2_cin512_cout1024'],
-        # stage 9
-        ['bottlecsp_r1_k1_s1_num8_gamma0.5_cin1024_cout1024'], # BottleneckCSP [1024]
-        # stage 10
-        ['sppcsp_r1_k1_s1_cin1024_cout512'],
-        # stage 11
-        ['cn_np_r1_k1_s1_cin512_cout256', 'up_r1_mnearest_sf2_c256', 'cn_r1_k1_s1_cin512_cout256_f8'],
-        # stage 12
-        ['concat_r1_c512_f-2'],
-        # stage 13
-        ['bottlecsp2_r1_k1_s1_num2_gamma0.5_cin512_cout256'], # should be csp2
-        # stage 14
-        ['cn_np_r1_k1_s1_cin256_cout128', 'up_r1_mnearest_sf2_c128', 'cn_r1_k1_s1_cin256_cout128_f6'],
-        # stage 15
-        ['concat_r1_c256_f-2'],
-        # stage 16
-        ['bottlecsp2_r1_k1_s1_num2_gamma0.5_cin256_cout128'],
-        # stage 17
-        ['cn_r1_k3_s1_cin128_cout256'],
-        # stage 18
-        ['cn_r1_k3_s2_cin128_cout256_f-2'],
-        # stage 19
-        ['concat_r1_c512_f16'],
-        # stage 20
-        ['bottlecsp2_r1_k1_s1_num2_gamma0.5_cin512_cout256'], #should be csp2
-        # stage 21
-        ['cn_r1_k3_s1_cin256_cout512'],
-        # stage 22
-        ['cn_r1_k3_s2_cin256_cout512_f-2'],
-        # stage 23
-        ['concat_r1_c1024_f11'],
-        # stage 24
-        ['bottlecsp2_r1_k1_s1_num2_gamma0.5_cin1024_cout512'], #should be csp2
-        # stage 25
-        ['cn_r1_k3_s1_cin512_cout1024_last'],
-    ]
+    # arch_def = [
+    #     # 
+    #     # Backbone
+    #     # stage 0
+    #     ['cn_r1_k3_s2_cin32_cout64'],
+    #     # stage 1
+    #     ['bottle_r1_k1_s1_cin64_cout64'], # BottleNeck [64]
+    #     # stage 2
+    #     ['cn_r1_k3_s2_cin64_cout128'],
+    #     # stage 3
+    #     ['bottlecsp_r1_k1_s1_num2_gamma0.5_cin128_cout128'],  # BottleNeck [128]
+    #     # stage 4
+    #     ['cn_r1_k3_s2_cin128_cout256'],
+    #     # stage 5
+    #     ['bottlecsp_r1_k1_s1_num8_gamma0.5_cin256_cout256'], #BottleNeck [256]
+    #     # stage 6
+    #     ['cn_r1_k3_s2_cin256_cout512'],
+    #     # stage 7
+    #     ['bottlecsp_r1_k1_s1_num8_gamma0.5_cin512_cout512'], # BottleNeckCSP [512]
+    #     # stage 8
+    #     ['cn_r1_k3_s2_cin512_cout1024'],
+    #     # stage 9
+    #     ['bottlecsp_r1_k1_s1_num8_gamma0.5_cin1024_cout1024'], # BottleneckCSP [1024]
+    #     # stage 10
+    #     ['sppcsp_r1_k1_s1_cin1024_cout512'],
+    #     # stage 11
+    #     ['cn_np_r1_k1_s1_cin512_cout256', 'up_r1_mnearest_sf2_c256', 'cn_r1_k1_s1_cin512_cout256_f8'],
+    #     # stage 12
+    #     ['concat_r1_c512_f-2'],
+    #     # stage 13
+    #     ['bottlecsp2_r1_k1_s1_num2_gamma0.5_cin512_cout256'], # should be csp2
+    #     # stage 14
+    #     ['cn_np_r1_k1_s1_cin256_cout128', 'up_r1_mnearest_sf2_c128', 'cn_r1_k1_s1_cin256_cout128_f6'],
+    #     # stage 15
+    #     ['concat_r1_c256_f-2'],
+    #     # stage 16
+    #     ['bottlecsp2_r1_k1_s1_num2_gamma0.5_cin256_cout128'],
+    #     # stage 17
+    #     ['cn_r1_k3_s1_cin128_cout256'],
+    #     # stage 18
+    #     ['cn_r1_k3_s2_cin128_cout256_f-2'],
+    #     # stage 19
+    #     ['concat_r1_c512_f16'],
+    #     # stage 20
+    #     ['bottlecsp2_r1_k1_s1_num2_gamma0.5_cin512_cout256'], #should be csp2
+    #     # stage 21
+    #     ['cn_r1_k3_s1_cin256_cout512'],
+    #     # stage 22
+    #     ['cn_r1_k3_s2_cin256_cout512_f-2'],
+    #     # stage 23
+    #     ['concat_r1_c1024_f11'],
+    #     # stage 24
+    #     ['bottlecsp2_r1_k1_s1_num2_gamma0.5_cin1024_cout512'], #should be csp2
+    #     # stage 25
+    #     ['cn_r1_k3_s1_cin512_cout1024_last'],
+    # ]
 
 
-    sta_num, arch_def, resolution = search_for_layer(flops_op_dict, arch_def, flops_minimum, flops_maximum)
-    if sta_num is None or arch_def is None or resolution is None:
-        raise ValueError('Invalid FLOPs Settings')
+    # sta_num, arch_def, resolution = search_for_layer(flops_op_dict, arch_def, flops_minimum, flops_maximum)
+    # if sta_num is None or arch_def is None or resolution is None:
+    #     raise ValueError('Invalid FLOPs Settings')
     model_kwargs = dict(
-        block_args=decode_arch_def(arch_def),
+        # block_args=decode_arch_def(arch_def),
+        model_args=model_args,
         choices=choices,
         stem_size=32,
         norm_kwargs=resolve_bn_args(kwargs),
@@ -1155,5 +1089,6 @@ def gen_supernet(flops_minimum=0, flops_maximum=600, choices=None, **kwargs):
         **kwargs,
     )
     model = SuperNet(**model_kwargs)
-    print('save:', model.save)
-    return model, sta_num, resolution
+    # return model, sta_num, resolution
+    return model, None, None
+    

@@ -11,7 +11,8 @@ def calculate_snip(model, arch_prob, inputs, targets, opt=None):
     model = model.module if is_ddp else model
     
     pred     = model(inputs, arch_prob)
-    det_loss, loss_items = compute_loss(pred[0][1], targets, model)  # scaled by batch_size
+    
+    det_loss, loss_items = compute_loss(pred[1], targets, model)  # scaled by batch_size
     det_loss = det_loss[0]
 
     ##################################
@@ -26,11 +27,13 @@ def calculate_snip(model, arch_prob, inputs, targets, opt=None):
      
     snip_value = 0
     for layer in model.blocks:           
-        num_of_choice_blocks = len(layer)
+        # num_of_choice_blocks = len(layer)
         # layer => <class 'torch.nn.modules.container. ModuleList'> 
-        for blocks in layer:
+        # for blocks in layer:
             # blocks => <class 'torch.nn.modules.container.ModuleList'>
-            chosen_block = blocks[0]    
+            # chosen_block = blocks[0]    
+            chosen_block = layer
+            
             if (isinstance(chosen_block, BottleneckCSP) or \
                 isinstance(chosen_block, BottleneckCSP2) or \
                 isinstance(chosen_block, Bottleneck) or \
