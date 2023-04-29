@@ -101,7 +101,7 @@ class FlopsEst(object):
                             args = dict(
                                 c1=in_chs,
                                 c2=out_chs,
-                                n=block.search_space['bottleneck'][option[search_keys.index('bottleneck')]],
+                                n=block.search_space['n_bottlenecks'][option[search_keys.index('n_bottlenecks')]],
                                 e=block.search_space['gamma'     ][option[search_keys.index('gamma')]],
                                 # n=option[key2idx['bottleneck']],
                                 # e=option[key2idx['gamma']],

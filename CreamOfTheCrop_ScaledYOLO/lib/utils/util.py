@@ -186,7 +186,9 @@ def create_optimizer_supernet(args, model, has_apex, filter_bias_and_bn=True):
     print(f'create_optimizer_supernet || opt_lower: {opt_lower} || weight_decay: {args.weight_decay} || momentum: {args.momentum}')
     thetas_lr = args.theta_optimizer.LR
     thetas_weight_decay = args.theta_optimizer.WEIGHT_DECAY
-    thetas_params = model.thetas_main.parameters()
+    # thetas_params = model.thetas_main.parameters()
+    thetas_params = model.get_optimizer_parameter()
+    
     # print(args)
 
     weight_decay = args.weight_decay
@@ -258,6 +260,7 @@ def parse_config_args(exp_name):
     parser.add_argument('--collect-synflows', type=int, default=0, help='Sample a lot of different architectures with corresponding synflows, if not 0 then samples specified number and exits the programm')
     parser.add_argument('--resume-theta-training', default='', type=str, help='load pretrained thetas')
     parser.add_argument('--nas', default='', type=str, help='NAS-Search-Space and hardware constraint combination')
+    parser.add_argument('--zc',  default='', type=str, help='Zero Cost Metrics Type')
     
     args = parser.parse_args()
 
@@ -288,3 +291,38 @@ def create_supernet_scheduler(cfg, optimizer):
     # lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: (
     #     cfg.LR - step / ITERS) if step <= ITERS else 0, last_epoch=-1)
     return scheduler, cfg.EPOCHS
+
+
+def write_thetas(output_dir, thetas, epoch, temperature=1.0):
+    alpha_distributions = stringify_theta(thetas)
+    beta_distributions  = stringify_theta(thetas, True, temperature)
+    
+    with open(os.path.join(output_dir, 'alpha_distribution.txt'), 'a') as f:
+        f.write(f'epoch: {epoch}')
+        f.writelines(str(alpha_distributions)+'\n')
+    with open(os.path.join(output_dir, 'beta_distribution.txt'), 'a') as f:
+        f.write(f'epoch: {epoch}')
+        f.writelines(str(beta_distributions)+'\n')
+
+
+def stringify_theta(thetas, normalize=False, temperature=1.):
+    if normalize:
+        normalize_func = lambda x: torch.nn.functional.softmax(x / temperature).detach().cpu().numpy()
+    else:
+        normalize_func = lambda x: x.detach().cpu().numpy()
+    
+    
+    write_arch = []
+    for arch in thetas:
+        tmp_arch = { 'block_name': arch['block_name'] }
+        if arch['block_name'] == 'Composite_Search':
+            tmp_arch['operators_choice'] = normalize_func(arch['operators_choice'])
+            tmp_arch['operators'] = write_thetas(arch['operators'], normalize, temperature)
+        else:
+            for key, value in arch.items():
+                if key == 'block_name': pass
+                else:
+                    tmp_arch[key] = normalize_func(arch[key])
+                     
+        write_arch.append(tmp_arch)
+    return write_arch

@@ -120,7 +120,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             block.block_arguments = block_args
             
             m_ = block
-            t = str(m)[8:-2].replace('__main__.', '')  # module type
+            t = str(m)[8:-2].replace('lib.models.blocks.', '')  # module type
             np = sum([x.numel() for x in m_.parameters()])  # number params
             m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params
             print('%3s%18s%3s%10.0f  %-40s%-30s' % (i, f, n, np, t, args))  # print

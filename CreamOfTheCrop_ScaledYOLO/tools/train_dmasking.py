@@ -32,13 +32,13 @@ except ImportError:
 
 # import models and training functions
 from lib.utils.flops_table import FlopsEst
-from lib.core.train import train_epoch, validate, train_epoch_dnas
+from lib.core.train import train_epoch, validate, train_epoch_dnas, train_epoch_dnas_V2
 from lib.models.structures.supernet import gen_supernet
 from lib.models.PrioritizedBoard import PrioritizedBoard
 from lib.models.MetaMatchingNetwork import MetaMatchingNetwork
 from lib.config import DEFAULT_CROP_PCT, IMAGENET_DEFAULT_STD, IMAGENET_DEFAULT_MEAN
 from lib.utils.util import parse_config_args, get_logger, \
-    create_optimizer_supernet, create_supernet_scheduler
+    create_optimizer_supernet, create_supernet_scheduler, stringify_theta
 from lib.utils.datasets import create_dataloader
 from lib.utils.kd_utils import FeatureAdaptation
 from lib.models.blocks.yolo_blocks import Conv, ConvNP, BottleneckCSP, BottleneckCSP2, set_algorithm_type
@@ -87,6 +87,7 @@ def main():
     TASK_PARAMS     = task_dict[task_name]['PARAMS']     # e.g TASK_PARAMS = 32 means 32 million parameters.
     SEARCH_SPACES   = task_dict[task_name]['CHOICES']
     FLOP_RESOLUTION = (None, 3, cfg.search_resolution, cfg.search_resolution)
+    os.makedirs('thetas_weights', exist_ok=True)
     
     output_dir = os.path.join(cfg.SAVE_PATH, cfg.exp_name)
     output_bakup_dir = os.path.join(output_dir, 'config')
@@ -147,12 +148,12 @@ def main():
     MetaMN = MetaMatchingNetwork(cfg)
     
     # number of choice blocks in supernet
-    choice_num = model.choices # First bottlecsp
+    # choice_num = model.choices # First bottlecsp
     if args.local_rank == 0:
         logger.info('Supernet created, param count: %.2f M', (
             sum([m.numel() for m in model.parameters()]) / 1e6))
         logger.info('resolution: %d', (cfg.DATASET.IMAGE_SIZE))
-        logger.info('choice number: %d', (choice_num))
+        # logger.info('choice number: %d', (choice_num))
 
     #initialize prioritized board
     # prioritized_board = PrioritizedBoard(cfg, CHOICE_NUM=choice_num, sta_num=sta_num, acc_gap=0.06)
@@ -287,41 +288,65 @@ def main():
 
     # training scheme
     # FREEZE_EPOCH=40
+    method = 'ver1'
     try:
         print('task_flops', TASK_FLOPS)
         print('FREEZE_EPOCH', cfg.FREEZE_EPOCH)
-        write_thetas(output_dir, model.module.thetas_main if is_parallel(model) else model.thetas_main, -1)
-        torch.save(model.state_dict(), os.path.join(output_dir, f'model_0.pt'))
+        # write_thetas(output_dir, model.module.thetas_main if is_parallel(model) else model.thetas_main, -1)
+        # torch.save(model.state_dict(), os.path.join(output_dir, f'model_0.pt'))
         for epoch in range(1, num_epochs+1):
             model.train()
             thetas_enable = False if epoch <= cfg.FREEZE_EPOCH else True
-            if not thetas_enable:
+            
+            ####################################################
+            # Update Model Method 2
+            # For epoch in epochs:
+            #     For iteration in iterations:
+            #         update model weights
+            #         update model architectures
+            ####################################################
+            if method == 'ver2':
+                train_epoch_dnas_V2(model, dataloader_weight, dataloader_thetas, optimizer, theta_optimizer, cfg, device=device, 
+                    task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
+                    est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
+                    epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema
+                )
+            
+            ####################################################
+            # Update Model Method 1
+            # For epoch in epochs:
+            #     For iteration in iterations:
+            #         update model weights
+            #     For iteration in iteartions:       
+            #         update model architectures
+            ####################################################
+            if method == 'ver1':
                 train_epoch_dnas(model, dataloader_weight, optimizer, cfg, device=device, 
-                                 task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
-                                 est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
-                                 epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema
-                                )
-                if epoch == cfg.FREEZE_EPOCH:
-                    torch.save(model.state_dict(), os.path.join(output_dir, f'model_40.pt'))
-            else:
-                train_epoch_dnas(model, dataloader_weight, optimizer, cfg, device=device, 
-                                task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
-                                est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
-                                epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema
-                                )
-                train_epoch_dnas(model, dataloader_thetas, theta_optimizer, cfg, device=device, 
-                                task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
-                                est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
-                                epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema, warmup=False
-                                )
+                    task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
+                    est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
+                    epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema
+                )
                 
-                if thetas_enable:
-                    temp_decay = np.exp(-0.045)
-                    print('Decreasing temperature!')
-                    if is_parallel(model):
-                        model.module.temperature = model.module.temperature * temp_decay
-                    else:
-                        model.temperature = model.temperature * temp_decay
+                if not thetas_enable:
+                    if epoch == cfg.FREEZE_EPOCH:
+                        torch.save(model.state_dict(), os.path.join(output_dir, f'model_40.pt'))
+                else:
+                    train_epoch_dnas(model, dataloader_thetas, theta_optimizer, cfg, device=device, 
+                        task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
+                        est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
+                        epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema, warmup=False
+                    )
+                
+            if thetas_enable:
+                # temp_decay = np.exp(-0.045) # 0.9560
+                # temp_decay = 0.2**(1/80)    # 0.9800
+                temp_decay = (0.2 * cfg.TEMPERATURE.FINAL)**(1/(num_epochs-cfg.FREEZE_EPOCH)) # 0.9560
+
+                print('Decreasing temperature!')
+                if is_parallel(model):
+                    model.module.temperature = model.module.temperature * temp_decay
+                else:
+                    model.temperature = model.temperature * temp_decay
                         
             lr_scheduler.step()
             # print(f'Writing thetas!    Learning Rate: {lr_scheduler.get_last_lr()}')
@@ -355,21 +380,10 @@ def main():
         pass
 
 
-def write_thetas(output_dir, thetas, epoch):
-    # alpha_distributions = []
-    # beta_distributions = []
-    # for theta in thetas:
-    #     alpha=theta().detach().cpu().numpy()
-    #     alpha_distributions.append(alpha)
-    #     beta_distributions.append(softmax(alpha))
-    alpha_distributions = [
-        [theta().detach().cpu().numpy() for theta in theta_module] 
-            for theta_module in thetas
-    ]
-    beta_distributions = [
-        [nn.functional.softmax(theta()).detach().cpu().numpy() for theta in theta_module] 
-            for theta_module in thetas
-    ]
+def write_thetas(output_dir, thetas, epoch, temperature=1.0):
+    alpha_distributions = stringify_theta(thetas)
+    beta_distributions  = stringify_theta(thetas, True, temperature)
+    
     with open(os.path.join(output_dir, 'alpha_distribution.txt'), 'a') as f:
         f.write(f'epoch: {epoch}')
         f.writelines(str(alpha_distributions)+'\n')

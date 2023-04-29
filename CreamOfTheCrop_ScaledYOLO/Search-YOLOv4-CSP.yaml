@@ -1,5 +1,5 @@
 # parameters
-nc: 80  # number of classes
+nc: 20  # number of classes
 depth_multiple: 1.0  # model depth multiple
 width_multiple: 1.0  # layer channel multiple
 
@@ -11,11 +11,14 @@ anchors:
 
 search_space:
   BottleneckCSP_Search:
-    gamma_space: [0.25, 0.50]
-    bottleneck_space: [0, 1]
+    gamma_space: [0.25, 0.50, 0.75]
+    bottleneck_space: [0, 1, 2]
+    # bottleneck_space: [0, 1]
+
   BottleneckCSP2_Search:
-    gamma_space: [0.25, 0.50]
-    bottleneck_space: [0, 1]
+    gamma_space: [0.25, 0.50, 0.75]
+    bottleneck_space: [0, 1, 2]
+    # bottleneck_space: [0, 1]
 
 # yolov4-csp backbone
 backbone:

@@ -19,7 +19,17 @@ from lib.utils.util import *
 from lib.utils.general import compute_loss, test, plot_images, is_parallel, build_foreground_mask, compute_sensitive_loss
 from lib.utils.kd_utils import compute_loss_KD
 from lib.utils.synflow import sum_arr_tensor
-from lib.zero_proxy import snip
+from lib.zero_proxy import snip, synflow
+
+
+PROXY_DICT = {
+    'snip'  :  snip.calculate_snip,
+    'synflow': synflow.calculate_synflow
+}
+# PROXY_DICT = {
+#     'snip'  : (lambda x,imgs: snip.calculate_snip(model, x['arch'], imgs, targets, optimizer)),
+#     'synflow':(lambda x,imgs: synflow.calculate_synflow(model, x['arch'], imgs, targets))
+# }
 
 
 def sample_arch(search_space):
@@ -94,9 +104,14 @@ def crossover(cand1, cand2):
         'arch_type': 'continuous'
     }
     
-    rand_stage      = rd.randint(0, len(sample['arch']) - 1)
-    rand_component  = rd.randint(0, len(sample['arch'][0]) - 1)
-    sample['arch'][rand_stage][rand_component] = copy.deepcopy(cand2['arch'][rand_stage][rand_component])
+    rand_stage      = np.random.randint(0, len(sample['arch']))
+    search_keys     = []
+    for k in sample['arch'][rand_stage].keys():
+        if k != 'operator' and k != 'block_name':
+            search_keys.append(k)
+    rand_component  = np.random.choice(search_keys)
+    
+    sample['arch'][rand_stage][rand_component] = cand2['arch'][rand_stage][rand_component].clone()
     return sample
 
 def mutation(canddidate):
@@ -104,16 +119,20 @@ def mutation(canddidate):
             'arch' : copy.deepcopy(canddidate['arch']),
             'arch_type': 'continuous'
         }
-        rand_stage      = rd.randint(0, len(sample['arch']) - 1)
-        rand_component  = rd.randint(0, len(sample['arch'][0]) - 1)
+        rand_stage      = np.random.randint(0, len(sample['arch']))
+        search_keys     = []
+        for k in sample['arch'][rand_stage].keys():
+            if k != 'operator' and k != 'block_name':
+                search_keys.append(k)
+        rand_component  = np.random.choice(search_keys)
         
         ori_op_idx = np.argmax(sample['arch'][rand_stage][rand_component])
         new_op_idx = ori_op_idx
         while new_op_idx == ori_op_idx and len(sample['arch'][rand_stage][rand_component]) > 1:
             new_op_idx = rd.randint(0, len(sample['arch'][rand_stage][rand_component]) - 1)
         
-        sample['arch'][rand_stage][rand_component][ori_op_idx] = 0
-        sample['arch'][rand_stage][rand_component][new_op_idx] = 1
+        sample['arch'][rand_stage][rand_component][ori_op_idx] = 0.
+        sample['arch'][rand_stage][rand_component][new_op_idx] = 1.
         return sample
 
 def get_model_info(candidates, info_funcs):
@@ -184,7 +203,7 @@ def _EA_crossover(parents, num, info_funcs, constraints=None):
         patience = 0
     return valid_candidates
 
-def _EA_sample(search_space, num, info_funcs, constraints=None):
+def _EA_sample(sample_function, num, info_funcs, constraints=None):
     """
     search_space : dict.
     num : int.
@@ -193,18 +212,22 @@ def _EA_sample(search_space, num, info_funcs, constraints=None):
     """
     patience = 0
     arches = []
+    print('EA Sampling : ', end='')
     while num:
-        arch_info = {'arch': sample_arch(search_space), 'arch_type': 'continuous'}
+        arch_info = {'arch': sample_function(), 'arch_type': 'continuous'}
         get_model_info(arch_info, info_funcs)
         
         if constraints is not None:
             if not fullfill_constraints(arch_info, constraints):
+                print(f'{num:3d}/{patience:3d} {arch_info["flops"]:5.2f}\r', end='')
                 patience+=1
                 continue
         
         arches.append(arch_info)
         num-=1
         patience = 0
+        
+    print()
     return arches
 
 
@@ -309,13 +332,14 @@ def train_epoch_zero_cost_rand(model, dataloader, optimizer, cfg, device, task_f
 #######################################
 # Search Zero-Cost Aging Evolution
 #######################################
-def train_epoch_zero_cost_EA(model, dataloader, optimizer, cfg, device, task_flops, task_params, cycles,
+def train_epoch_zero_cost_EA(proxy_name, model, dataloader, optimizer, cfg, device, task_flops, task_params, cycles,
                      est=None, logger=None, local_rank=0, prefix='', logdir='./'):
     batch_size = cfg.DATASET.BATCH_SIZE
     is_ddp = is_parallel(model)
     nn_model = model.module if is_ddp else model
     
-    search_space = model.module.search_space if is_ddp else model.search_space
+    naive_model  = model.module if is_ddp else model
+    search_space = naive_model.search_space
     
     ##################################################################
     ### 0st. Select Dataset
@@ -326,45 +350,56 @@ def train_epoch_zero_cost_EA(model, dataloader, optimizer, cfg, device, task_flo
         imgs     = uimgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
         targets  = targets.to(device)
         if iter_idx == 10: break
-    
+
+    ##############################################
+    # Zero Cost Name (snip, synflow)
+    ##############################################
+    # proxy_name = 'synflow'
     info_funcs = [
         {'flops' : (lambda x: nn_model.calculate_flops_new (x, est.flops_dict) / 1e3)},
         {'params': (lambda x: nn_model.calculate_params_new(x, est.params_dict))},
-        {'snip'  : (lambda x: snip.calculate_snip(model, x['arch'], imgs, targets, optimizer))}
+        {proxy_name : (lambda x: PROXY_DICT[proxy_name](model, x['arch'], imgs, targets, optimizer))}
     ]
     constraints = [
         {'constraint_name' : 'flops', 'operation' : operator.lt, 'value' : task_flops * 1.05},
         # {'constraint_name' : 'params', 'operation' : operator.lt, 'value' : task_params},
     ]
     
-    large_arch    = {'arch' : largest_arch(search_space), 'arch_type': 'continuous'}
+    ##############################################
+    # Show Largest Network for Debug
+    ##############################################
+    large_arch    = {'arch' : naive_model.largest_sampling(), 'arch_type': 'continuous'}
     get_model_info(large_arch, info_funcs)
-    s = f"large_arch => FLOPS: {large_arch['flops']:.2f} Params: {large_arch['params']:.2f} SNIP: {large_arch['snip']:e}"
+    s = f"large_arch => FLOPS: {large_arch['flops']:.2f} Params: {large_arch['params']:.2f} {proxy_name}: {large_arch[proxy_name]:e}"
     logger.info(s)
     logger.info(f"large_arch => Architecture : {str(large_arch['arch'])}")
-    # exit()
 
-    small_arch = {'arch' : smallest_arch(search_space), 'arch_type': 'continuous'}
+    ##############################################
+    # Show Smallest Network for Debug
+    ##############################################
+    small_arch = {'arch' : naive_model.smallest_sampling(), 'arch_type': 'continuous'}
     get_model_info(small_arch, info_funcs)
-    s = f"small_arch => FLOPS: {small_arch['flops']:.2f} Params: {small_arch['params']:.2f} SNIP: {small_arch['snip']:e}"
+    s = f"small_arch => FLOPS: {small_arch['flops']:.2f} Params: {small_arch['params']:.2f} {proxy_name}: {small_arch[proxy_name]:e}"
     logger.info(s)
     logger.info(f"small_arch => Architecture : {str(small_arch['arch'])}")
+    exit()
+    # manually_arch = [
+    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1.])}, 
+    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([1., 0.])}, 
+    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1.])}, 
+    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1.])}, 
+    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0.])},
+    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1.])},
+    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0.])},
+    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0.])} 
+    # ]
+    # man_arch = {'arch' : manually_arch, 'arch_type': 'continuous'}
+    # get_model_info(man_arch, info_funcs)
+    # s = f"man_arch => FLOPS: {man_arch['flops']:.2f} Params: {man_arch['params']:.2f} {proxy_name}: {man_arch[proxy_name]:e}"
+    # logger.info(s)
+    # logger.info(f"man_arch => Architecture : {str(man_arch['arch'])}")
     
-    manually_arch = [
-        [torch.tensor([0., 0., 1.]), torch.tensor([1., 0., 0.])], 
-        [torch.tensor([0., 0., 1.]), torch.tensor([1., 0., 0.])], 
-        [torch.tensor([0., 0., 1.]), torch.tensor([1., 0., 0.])], 
-        [torch.tensor([0., 1., 0.]), torch.tensor([1., 0., 0.])], 
-        [torch.tensor([0., 0., 1.]), torch.tensor([1., 0., 0.])], 
-        [torch.tensor([1., 0., 0.]), torch.tensor([1., 0., 0.])], 
-        [torch.tensor([0., 1., 0.]), torch.tensor([1., 0., 0.])], 
-        [torch.tensor([0., 1., 0.]), torch.tensor([1., 0., 0.])]
-    ]
-    man_arch = {'arch' : manually_arch, 'arch_type': 'continuous'}
-    get_model_info(man_arch, info_funcs)
-    s = f"man_arch => FLOPS: {man_arch['flops']:.2f} Params: {man_arch['params']:.2f} SNIP: {man_arch['snip']:e}"
-    logger.info(s)
-    logger.info(f"man_arch => Architecture : {str(man_arch['arch'])}")
+    
     ########################################################
     # Init Pool
     ########################################################
@@ -377,10 +412,11 @@ def train_epoch_zero_cost_EA(model, dataloader, optimizer, cfg, device, task_flo
     TOPK             = 5
     cycles           = 1000
     
-    pools = _EA_sample(search_space, POPULATION_COUNT, info_funcs, constraints)
+    sample_func = lambda : naive_model.random_sampling()
+    pools = _EA_sample(sample_func, POPULATION_COUNT, info_funcs, constraints)
     
-    best_arch = (sorted(pools, key = lambda x: x['snip']))[-1]
-    s = f"Best Arch In Initial Pool => FLOPS: {best_arch['flops']:.2f} Params: {best_arch['params']:.2f} SNIP: {best_arch['snip']:e}"
+    best_arch = (sorted(pools, key = lambda x: x[proxy_name]))[-1]
+    s = f"Best Arch In Initial Pool => FLOPS: {best_arch['flops']:.2f} Params: {best_arch['params']:.2f} {proxy_name}: {best_arch[proxy_name]:e}"
     logger.info(s)
     logger.info(f"Best Arch In Initial Pool => Historical Best => Architecture : {str(best_arch['arch'])}")
     
@@ -389,7 +425,7 @@ def train_epoch_zero_cost_EA(model, dataloader, optimizer, cfg, device, task_flo
         ########################################################
         # Random Select Candidiate in Pool
         ########################################################
-        candidate_idx = sorted(range(len(pools)), key=lambda i: pools[i]['snip'])
+        candidate_idx = sorted(range(len(pools)), key=lambda i: pools[i][proxy_name])
         candidate_idx = candidate_idx[:PARENT_COUNT]
         candidates = [pools[idx] for idx in candidate_idx]
         
@@ -406,57 +442,47 @@ def train_epoch_zero_cost_EA(model, dataloader, optimizer, cfg, device, task_flo
         ########################################################
         # Random Sample
         ########################################################
-        new_candidates3 = _EA_sample(search_space, RANDOM_COUNT, info_funcs, constraints=constraints)
+        new_candidates3 = _EA_sample(sample_func, RANDOM_COUNT, info_funcs, constraints=constraints)
         
         ########################################################
         # Update Pool and Discard Old Item
         ########################################################
         new_candidates_all = new_candidates1 + new_candidates2 + new_candidates3
-        new_candidates_all = sorted(new_candidates_all, key=lambda x: x['snip'])
+        new_candidates_all = sorted(new_candidates_all, key=lambda x: x[proxy_name])
         pools.extend(new_candidates_all)
         for i in range(DISCARD_COUNT): pools.pop(0)
-        
+
         #############################################
         # Keep Track of Historical Best Architecture
         #############################################
-        if best_arch['snip'] < new_candidates_all[-1]['snip']:
+        if best_arch[proxy_name] < new_candidates_all[-1][proxy_name]:
             best_arch = new_candidates_all[-1]
-            s = f"Historical Best => FLOPS: {best_arch['flops']:.2f} Params: {best_arch['params']:.2f} SNIP: {best_arch['snip']:e}"
+            s = f"Historical Best => FLOPS: {best_arch['flops']:.2f} Params: {best_arch['params']:.2f} {proxy_name}: {best_arch[proxy_name]:e}"
             logger.info(s)
             logger.info(f"Historical Best => Architecture : {str(best_arch['arch'])}")
-        
-        sorted_pool = sorted(pools, key=lambda x: x['snip'])
+
+        sorted_pool = sorted(pools, key=lambda x: x[proxy_name])
         pool_best = sorted_pool[-1]
-        s = f"Pool Best => FLOPS: {pool_best['flops']:.2f} Params: {pool_best['params']:.2f} SNIP: {pool_best['snip']:e}"
+        s = f"Pool Best => FLOPS: {pool_best['flops']:.2f} Params: {pool_best['params']:.2f} {proxy_name}: {pool_best[proxy_name]:e}"
         bar.set_description(s)
-        
-        # s1 = ''
-        # s2 = ''
-        # s3 = ''
-        # for arch in new_candidates_all:
-        #     s1 += f"{arch['flops']:8.2f} "
-        #     s2 += f"{arch['params']:8.2f} "
-        #     s3 += f"{arch['snip']:8.2e} "
-        # print('FLOPS', s1)
-        # print('SNIP ', s3)
-        
+
         if iter_idx % 100 == 0:
-            s1 = 'Current-Pool-FLOPS '
+            s1 = '\nCurrent-Pool-FLOPS '
             s2 = 'Current-Pool-Param '
-            s3 = 'Current-Pool-SNIP  '
+            s3 = f'Current-Pool-{proxy_name}  '
             for arch in sorted_pool[-10:]:
-                s1 += f"{arch['flops']:8.2f} "
-                s2 += f"{arch['params']:8.2f} "
-                s3 += f"{arch['snip']:8.2e} "
+                s1 += f"{arch['flops']:8.4f} "
+                s2 += f"{arch['params']:8.4f} "
+                s3 += f"{arch[proxy_name]:8.4f} "
             logger.info(s1)
             logger.info(s2)
             logger.info(s3)
         
     
     logger.info('End Of Algorithm')
-    pools = sorted(pools, key=lambda x: x['snip'])
+    pools = sorted(pools, key=lambda x: x[proxy_name])
     for idx, arch_info in enumerate(pools[-TOPK:]):
-        s = f"Pool Top{TOPK-idx} => FLOPS: {arch_info['flops']:.2f} Params: {arch_info['params']:.2f} SNIP: {arch_info['snip']:e}"
+        s = f"Pool Top{TOPK-idx} => FLOPS: {arch_info['flops']:.2f} Params: {arch_info['params']:.2f} {proxy_name}: {arch_info[proxy_name]:e}"
         logger.info(s)
         logger.info(f"Pool Top{TOPK-idx} => Architecture : {str(arch_info['arch'])}")
 

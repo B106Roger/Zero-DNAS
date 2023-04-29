@@ -9,6 +9,7 @@ from lib.models.blocks.yolo_blocks import *
 def calculate_snip(model, arch_prob, inputs, targets, opt=None):
     is_ddp = is_parallel(model)
     model = model.module if is_ddp else model
+    DEBUG = False
     
     pred     = model(inputs, arch_prob)
     
@@ -26,28 +27,21 @@ def calculate_snip(model, arch_prob, inputs, targets, opt=None):
     keys = sorted(model.search_space.keys())
      
     snip_value = 0
-    for layer in model.blocks:           
-        # num_of_choice_blocks = len(layer)
-        # layer => <class 'torch.nn.modules.container. ModuleList'> 
-        # for blocks in layer:
-            # blocks => <class 'torch.nn.modules.container.ModuleList'>
-            # chosen_block = blocks[0]    
-            chosen_block = layer
+    for block_idx, layer in enumerate(model.blocks):
+        chosen_block = layer
             
-            if (isinstance(chosen_block, BottleneckCSP) or \
-                isinstance(chosen_block, BottleneckCSP2) or \
-                isinstance(chosen_block, Bottleneck) or \
-                isinstance(chosen_block, C3) or \
-                isinstance(chosen_block, SPP) or \
-                isinstance(chosen_block, nn.Conv2d) or \
-                isinstance(chosen_block, Conv) or True
-                    
-            ):
-                for n, p in chosen_block.named_parameters():
-                    if 'mask' in n:
-                        assert(p.grad is None)
-                    else:
-                        snip_value += (p * p.grad).abs().sum()
+        if ('Search' in layer.__class__.__name__):
+            for n, p in chosen_block.named_parameters():
+                if 'mask' in n:
+                    assert(p.grad is None)
+                else:
+                    tmp_value = (p * p.grad).abs().sum()
+                    snip_value += tmp_value
+                    if DEBUG:
+                        if 'bn' not in n:
+                            print(f'{n} : ', p.shape, p.sum(), tmp_value.detach().cpu(), )
+                        
+
     ##################################
     # Discard Gradient 
     ##################################

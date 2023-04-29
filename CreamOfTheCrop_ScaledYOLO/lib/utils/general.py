@@ -140,7 +140,7 @@ def labels_to_class_weights(labels, nc=80):
         return torch.Tensor()
 
     labels = np.concatenate(labels, 0)  # labels.shape = (866643, 5) for COCO
-    classes = labels[:, 0].astype(np.int)  # labels = [class xywh]
+    classes = labels[:, 0].astype(np.int32)  # labels = [class xywh]
     weights = np.bincount(classes, minlength=nc)  # occurences per class
 
     # Prepend gridpoint count (for uCE trianing)
@@ -1714,7 +1714,7 @@ def test(data,
         with torch.no_grad():
             # Run model
             t = time_synchronized()
-            [inf_out, train_out], _, _ = model(img)  # inference and training outputs
+            [inf_out, train_out] = model(img)  # inference and training outputs
             #inf_out, train_out = model(img.to(memory_format=torch.channels_last), augment=augment)  # inference and training outputs
             t0_current = time_synchronized() - t
             t0 += t0_current

@@ -1,6 +1,7 @@
 import math
 import itertools
 import torch
+import copy
 import torch.nn as nn
 from mish_cuda import MishCuda as Mish
 # from torch.nn import ReLU as Mish
@@ -94,18 +95,20 @@ class GeneralOpeartor_Search(nn.Module):
         
         return results, keys
     
-    def generate_arch(self):
-        pass
+    def init_arch_parameter(self):
+        arch = {'block_name' : self.block_name}
+        return arch
+
     
 class BottleneckCSP_Search(GeneralOpeartor_Search):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     # Modify from    https://github.com/chiahuilin0531/ScaledYOLOv4
-    def __init__(self, c1, c2, gamma_space, bottleneck_space, shortcut=True, g=1, bn='groupnorm', act='relu'):  # ch_in, ch_out, number, shortcut, groups, expansion
+    def __init__(self, c1, c2, gamma_space, bottleneck_space, shortcut=True, g=1, bn='batchnorm', act='mish'): #, bn='groupnorm', act='relu'):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(BottleneckCSP_Search, self).__init__()
         # self.gamma_space      = gamma_space
         # self.bottleneck_space = bottleneck_space
-        self.search_space['gamma']      = gamma_space
-        self.search_space['bottleneck'] = bottleneck_space
+        self.search_space['gamma']         = copy.deepcopy(gamma_space)
+        self.search_space['n_bottlenecks'] = copy.deepcopy(bottleneck_space)
         
         e=max(gamma_space)
         channel_values = [int(gamma*c2) for gamma in gamma_space]
@@ -129,7 +132,7 @@ class BottleneckCSP_Search(GeneralOpeartor_Search):
         self.act = ACTIVATION[act]()
         
         self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
-        self.block_name = f'bottlecsp_num{n}_gamma{e}'
+        self.block_name = f'{self.__class__.__name__}_num{n}_gamma{e}'
         ########################################################################################
         
         
@@ -144,12 +147,10 @@ class BottleneckCSP_Search(GeneralOpeartor_Search):
         Parameters
         ----------
         x: float32, (b, c, w, h)
-        n_bottlenecks: integer
         args: dict
             'gamma_dist': float32, (num_of_gamma_choices,)
         """
         mask = 1.0
-
         if args is not None:
             if 'gamma' in args.keys() and args['gamma'] is not None:
                 mask = 0.0
@@ -158,7 +159,7 @@ class BottleneckCSP_Search(GeneralOpeartor_Search):
                 mask = mask.reshape(1,-1,1,1)
         
             if 'n_bottlenecks' in args.keys() and args['n_bottlenecks'] is not None:
-                depth_vals = self.search_space['bottleneck'] # args['n_bottlenecks_val']
+                depth_vals = self.search_space['n_bottlenecks'] # args['n_bottlenecks_val']
                 depth_dist = args['n_bottlenecks']
                 
                 m_out = self.cv1(x) * mask
@@ -173,7 +174,8 @@ class BottleneckCSP_Search(GeneralOpeartor_Search):
                 m_out = aggregate_feature
             else:
                 m_out = self.cv1(x)   * mask
-                m_out = self.m(m_out) * mask
+                for m in self.m:
+                    m_out = m(m_out) * mask
         else:
             m_out = self.cv1(x)   * mask
             m_out = self.m(m_out) * mask
@@ -182,14 +184,21 @@ class BottleneckCSP_Search(GeneralOpeartor_Search):
         y2 = self.cv2(x) * mask
         return self.cv4(self.act(self.bn(torch.cat((y1, y2), dim=1))))
 
+    def init_arch_parameter(self):
+        arch = super(BottleneckCSP_Search, self).init_arch_parameter()
+        for key, candidates in self.search_space.items():
+            length    = len(candidates)
+            arch[key] = torch.nn.Parameter(torch.ones((length, )) / length)
+        return arch
+    
 class BottleneckCSP2_Search(GeneralOpeartor_Search):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
-    def __init__(self, c1, c2, gamma_space, bottleneck_space, shortcut=True, g=1, bn='groupnorm', act='relu'):  # ch_in, ch_out, number, shortcut, groups, expansion
+    def __init__(self, c1, c2, gamma_space, bottleneck_space, shortcut=True, g=1, bn='batchnorm', act='mish'): #bn='groupnorm', act='relu'):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(BottleneckCSP2_Search, self).__init__()
         # self.gamma_space      = gamma_space
         # self.bottleneck_space = bottleneck_space
         self.search_space['gamma']      = gamma_space
-        self.search_space['bottleneck'] = bottleneck_space
+        self.search_space['n_bottlenecks'] = bottleneck_space
         
         e=max(gamma_space)
         channel_values = [int((gamma+0.5)*c2) for gamma in gamma_space]
@@ -203,7 +212,7 @@ class BottleneckCSP2_Search(GeneralOpeartor_Search):
         self.bn  = NORMALIZATION[bn](2 * c_)
         self.act = ACTIVATION[act]()
         self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
-        self.block_name = f'bottlecsp2_num{n}_gamma{e}'
+        self.block_name = f'{self.__class__.__name__}_num{n}_gamma{e}'
         ########################################################################################
         
         # self.masks = (num_of_mask, max_channel)
@@ -217,40 +226,39 @@ class BottleneckCSP2_Search(GeneralOpeartor_Search):
         Parameters
         ----------
         x: float32, (b, c, w, h)
-        n_bottlenecks: integer
         args: dict
             'gamma_dist': float32, (num_of_gamma_choices,)
         """
         mask = 1.0
-        if (n_bottlenecks == None): n_bottlenecks = len(self.m)
         if args is not None:
-            if 'gamma_dist' in args.keys() and args['gamma_dist'] is not None:
-                # mask = self.masks * args['gamma_dist']
+            if 'gamma' in args.keys() and args['gamma'] is not None:
                 mask = 0.0
                 for i in range(len(self.masks)):
-                    mask += self.masks[i] *  args['gamma_dist'][i]
-                # mask = mask.unsqueeze(0)
+                    mask += self.masks[i] * args['gamma'][i]
                 mask = mask.reshape(1,-1,1,1)
         
-        if args is not None and 'n_bottlenecks' in args.keys() and args['n_bottlenecks'] is not None:
-            depth_vals = self.search_space['bottleneck'] # args['n_bottlenecks_val']
-            depth_dist = args['n_bottlenecks']
-            
-            x1 = m_out = self.cv1(x) * mask
-            aggregation = 0
-            depth_idx = 0
-            for depth in range(len(self.m) + 1):
-                if depth == depth_vals[depth_idx]:
-                    aggregation += m_out * depth_dist[depth_idx]
-                    depth_idx += 1
-                if depth == depth_vals[-1]: break
-                m_out = self.m[depth](m_out) * mask
-            m_out = aggregation
+            if 'n_bottlenecks' in args.keys() and args['n_bottlenecks'] is not None:
+                depth_vals = self.search_space['n_bottlenecks'] # args['n_bottlenecks_val']
+                depth_dist = args['n_bottlenecks']
+                
+                x1 = m_out = self.cv1(x) * mask
+                aggregation = 0
+                depth_idx = 0
+                for depth in range(len(self.m) + 1):
+                    if depth == depth_vals[depth_idx]:
+                        aggregation += m_out * depth_dist[depth_idx]
+                        depth_idx += 1
+                    if depth == depth_vals[-1]: break
+                    m_out = self.m[depth](m_out) * mask
+                m_out = aggregation
+            else:
+                x1 = m_out = self.cv1(x) * mask
+                for m in self.m:
+                    m_out = m(m_out) * mask
         else:
             x1 = m_out = self.cv1(x) * mask
-            for m in self.m[:n_bottlenecks]:
-                m_out = m(m_out) * mask
-        
+            m_out = self.m(m_out) * mask
+            
         y1 = m_out
         y2 = self.cv2(x1) * mask
         return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
@@ -266,10 +274,19 @@ class BottleneckCSP2_Search(GeneralOpeartor_Search):
         #     y2 = self.cv2(x1) * mask
         #     return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
 
+    def init_arch_parameter(self):
+        arch = super(BottleneckCSP2_Search, self).init_arch_parameter()
+        for key, candidates in self.search_space.items():
+            length    = len(candidates)
+            arch[key] = torch.nn.Parameter(torch.ones((length, )) / length)
+        return arch
+
 class Composite_Search(GeneralOpeartor_Search):
     def __init__(self, operators):
         super(Composite_Search, self).__init__()
+        self.search_space = {'operator_choice' : list(range(len(operators)))}
         self.operators = operators
+        self.block_name = f'{self.__class__.__name__}_op{len(operators)}'
         
     def forawrd(self, x, args_list):
         out = 0
@@ -277,3 +294,17 @@ class Composite_Search(GeneralOpeartor_Search):
             out += block(x, args)
             
         return out
+    
+    def init_arch_parameter(self):
+        arch = super(BottleneckCSP2_Search).init_arch_parameter()
+        arch['operators'] = []
+        for operator in self.operators:
+            if 'Search' in operator.__class__.__name__:
+                arch['operators'].append(operator.init_arch_parameter())
+            else:
+                arch['operators'].append(None)
+
+        
+        length = len(self.operators)
+        arch['operators_choice'] = torch.nn.Parameter(torch.ones((length,)) / length)
+        return arch

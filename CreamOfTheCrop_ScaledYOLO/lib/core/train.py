@@ -356,17 +356,17 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
         print(('%10s' * 14) % ('Epoch', 'gpu_mem', 'GIoU', 'obj', 'cls', 'total', 'targets', 'img_size', 'lr', 'moment', 'decay', 'temp', 'GFLOPS', 'f_loss'))
         pbar = tqdm(pbar, total=iterations, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
     
+    
     t_data = time.time()
     # for iteration, (input, target) in enumerate(loader):
     for iter_idx, (imgs, targets, paths, _) in pbar:
-        # if iter_idx == 10: break
         t_data = time.time() - t_data 
         ##################################################################
         ### 1st. Train SuperNet Parameter
         ##################################################################
         # imgs = (batch=2, 3, height, width)
         imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
-        
+
         ni = iter_idx + iterations * (epoch- 1)
         if ni <= nw and warmup:
             import math
@@ -390,30 +390,17 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
         # arch_theta = torch.cat([[theta() for theta in theta_module] for theta_module in (model.module.thetas if is_ddp else model.thetas )], dim=0)
         
         
-        if is_gumbel:
+        if True:
             # gumbel_prob = nn.functional.gumbel_softmax(arch_theta, temperature, dim=-1)
-            gumbel_prob = [
-                [nn.functional.gumbel_softmax(theta(), temperature) for theta in theta_module] 
-                    for theta_module in (model.module.thetas if is_ddp else model.thetas )
-            ]
-
+            gumbel_prob = model.module.gumbel_sampling(temperature) if is_ddp else model.gumbel_sampling(temperature)
         else:
             # gumbel_prob = nn.functional.softmax(arch_theta, dim=-1)
-            gumbel_prob = [
-                [nn.functional.softmax(theta()) for theta in theta_module] 
-                    for theta_module in (model.module.thetas if is_ddp else model.thetas )
-            ]
-        
-        # print('gumbel_prob', gumbel_prob)
-        # if (iter_idx + 1) % (iterations//3) == 0:
-        #     logger.info(f'{prefix} proc({local_rank}/{world_size}). Theta Distribtuion in 1st stage ' + str(arch_theta[0].detach().cpu().numpy()))
+            gumbel_prob = model.module.softmax_sampling(temperature) if is_ddp else model.softmax_sampling(temperature)
         
         t_infer=time.time()
         pred = model.module(imgs, gumbel_prob) if is_ddp else model(imgs, gumbel_prob)
         
-
         # det_loss, loss_items = compute_loss(pred[0][1], targets.to(device), model)  # scaled by batch_size
-        print('pred', pred)
         det_loss, loss_items = compute_loss(pred, targets.to(device), model)  # scaled by batch_size
         det_loss = det_loss[0]
         
@@ -478,19 +465,143 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
         t_data = time.time()
     torch.cuda.synchronize()
 
-    # if iteration % (iterations // 2 -1) == 0:
-    #     distributions = softmax(model.module.thetas[0]().detach().cpu().numpy())
-    #     print('Distributions in 1 stage:', distributions)
-             
-    # if iteration % cfg.LOG_INTERVAL == 0:
-    #     lrl = [param_group['lr'] for param_group in optimizer.param_groups]
-    #     lr = sum(lrl) / len(lrl)
+
+def train_epoch_dnas_V2(model, dataloader, theta_dataloader, optimizer, theta_optimizer, cfg, device, task_flops, task_params, 
+                     est=None, logger=None, local_rank=0, world_size=0, is_gumbel=False,
+                     prefix='', epoch=None, total_epoch=None, logdir='./', ema=None, warmup=True):
+    batch_time_m = AverageMeter()
+    data_time_m = AverageMeter()
+    training_losses_m = AverageMeter()
+    flops_losses_m = AverageMeter()
+    det_losses_m = AverageMeter()
+    
+    cache_hits = 0
+    iterations = len(dataloader)
+
+    end = time.time()
+    last_idx = len(dataloader) - 1
+    
+    batch_size = cfg.DATASET.BATCH_SIZE
+    alpha = 0.1        # for flops_loss
+    beta = 0.01         # for params_loss
+    gamma = 0.01        # for zero cost loss
+    omega = 0.01        # for depth loss
+    eta = 0.01          # for regularization loss, default 0.01
+    nw = max(3 * batch_size, 1e3)
+    is_ddp = is_parallel(model)
+    
+    # temperature = model.module.temperature if is_ddp else model.temperature
+    mloss = torch.zeros(4, device=device)  # mean losses
+    
+    pbar = enumerate(dataloader)
+    if local_rank in [-1, 0]:
+        logger.info(('%10s' * 14) % ('Epoch', 'gpu_mem', 'GIoU', 'obj', 'cls', 'total', 'targets', 'img_size', 'lr', 'moment', 'decay', 'temp', 'GFLOPS', 'f_loss'))
+        pbar = tqdm(pbar, total=iterations, bar_format='{l_bar}{bar:5}{r_bar}')  # progress bar
+    
+    def valid_generator():
+        while True:
+          for x, t, path, shape in theta_dataloader:
+            yield x, t, path, shape
+    valid_gen = valid_generator()
+    
+    temperature = model.module.temperature if is_ddp else model.temperature
+    
+    arch_theta = torch.cat([theta().reshape(1, -1) for theta in (model.module.thetas if is_ddp else model.thetas )], dim=0)
+    arch_prob = nn.functional.softmax(arch_theta, dim=-1).cpu().detach().numpy()
+    logger.info(f'Begin Architecture : {str(arch_prob)}')
+
+    for iter_idx, (imgs, targets, paths, _) in pbar:
+        ##################################################################
+        # 1st. WarmUp Learning Rate
+        ##################################################################
+        ni = iter_idx + iterations * (epoch- 1)
+        if ni <= nw and warmup:
+            import math
+            lf = lambda x: (((1 + math.cos(x * math.pi / total_epoch)) / 2) ** 1.0) * 0.8 + 0.2
+            xi = [0, nw]  # x interp
+            # model.gr = np.interp(ni, xi, [0.0, 1.0])  # giou loss ratio (obj_loss = 1.0 or giou)
+            accumulate = max(1, np.interp(ni, xi, [1, 1]).round())
+            for j, x in enumerate(optimizer.param_groups):
+                # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
+                if 'initial_lr' not in x:
+                    continue
+                w_lr = np.interp(ni, xi, [0.1 if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
+                
+                x['lr'] = w_lr
+                if 'momentum' in x:
+                    w_momentum = np.interp(ni, xi, [0.9, cfg.momentum])
+                    x['momentum'] = w_momentum
+
+
+
+        ##################################################################
+        ### 2nd. Update SuperNet Architecture
+        ##################################################################
+        if epoch > cfg.FREEZE_EPOCH:
+            # Prepare Data
+            input_valid, target_valid, _, _ = next(valid_gen)
+            # Prepare Architecture Parameter
+            train_loss, loss_items, hardware_losses, train_info = train_step_dnas(model, input_valid, target_valid, False, est, task_flops, task_params, device)
+            # squared_error_flops = hardware_losses['squared_error_flops']
+            # output_flops        = train_info['output_flops']
+            # n_targets           = train_info['n_targets']
+            # n_imgs              = train_info['n_imgs']
+
+            
+            time_grad= time.time()
+            theta_optimizer.zero_grad()
+            train_loss.backward()
+            theta_optimizer.step()
         
-    #         # if cfg.SAVE_IMAGES and output_dir:
-    #         #     torchvision.utils.save_image(
-    #         #         input, os.path.join(
-    #         #             output_dir, 'train-batch-%d.jpg' %
-    #         #             iteration), padding=0, normalize=True)
+        ##################################################################
+        ### 3rd. Train SuperNet Parameter
+        ##################################################################
+        train_loss, loss_items, hardware_losses, train_info = train_step_dnas(model, imgs, targets, is_gumbel, est, task_flops, task_params, device)
+        squared_error_flops = hardware_losses['squared_error_flops']
+        output_flops        = train_info['output_flops']
+        n_targets           = train_info['n_targets']
+        n_imgs              = train_info['n_imgs']
+        if (iter_idx + 1) % 100 == 0:
+            train_prob          = train_info['architecture'].cpu().detach().numpy()
+            logger.info(f'Train Temp : {temperature} Architecture : {str(train_prob)}')
+        
+        time_grad= time.time()
+        optimizer.zero_grad()
+        train_loss.backward()
+        optimizer.step()
+        if ema is not None:
+            ema.update(model)
+
+        # Basic Info
+        for j, x in enumerate(optimizer.param_groups):
+            if 'momentum' in x:
+                break
+        print_lr = x['lr'] if 'lr' in x else 0
+        print_m = x['momentum'] if 'momentum' in x else 0
+        print_wdecay = x['weight_decay'] if 'weight_decay' in x else 0
+        
+        # Print
+        if local_rank in [-1, 0]:
+            ni = iter_idx
+            mloss = (mloss * iter_idx + loss_items) / (iter_idx + 1)  # update mean losses
+            mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
+            s = ('%10s' * 2 + '%10.4g' * 12) % (
+                '%g/%g' % (epoch, total_epoch), mem, *mloss, n_targets, n_imgs, print_lr, print_m, print_wdecay, temperature, output_flops, squared_error_flops.detach().cpu())
+
+            date_time = datetime.now().strftime('%m/%d %I:%M %p') + ' | '
+            pbar.set_description(date_time + s)
+            
+            # Plot
+            if ni < 3:
+                f = str(Path(logdir) / ('train_batch%g.jpg' % ni))  # filename
+                result = plot_images(images=imgs, targets=targets, paths=paths, fname=f)
+
+    arch_theta = torch.cat([theta().reshape(1, -1) for theta in (model.module.thetas if is_ddp else model.thetas )], dim=0)
+    arch_prob = nn.functional.softmax(arch_theta, dim=-1).cpu().detach().numpy()
+    logger.info(f'End Architecture : {str(arch_prob)}', )
+
+    logger.info(s)        
+    torch.cuda.synchronize()
 
 
 ##############################

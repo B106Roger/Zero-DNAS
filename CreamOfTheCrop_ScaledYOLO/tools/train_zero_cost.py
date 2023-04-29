@@ -40,7 +40,7 @@ from lib.models.PrioritizedBoard import PrioritizedBoard
 from lib.models.MetaMatchingNetwork import MetaMatchingNetwork
 from lib.config import DEFAULT_CROP_PCT, IMAGENET_DEFAULT_STD, IMAGENET_DEFAULT_MEAN
 from lib.utils.util import parse_config_args, get_logger, \
-    create_optimizer_supernet, create_supernet_scheduler
+    create_optimizer_supernet, create_supernet_scheduler, stringify_theta
 from lib.utils.datasets import create_dataloader
 from lib.utils.kd_utils import FeatureAdaptation
 from lib.models.blocks.yolo_blocks import Conv, ConvNP, BottleneckCSP, BottleneckCSP2, set_algorithm_type
@@ -67,9 +67,14 @@ def config_backup(backup_path, args):
         f.writelines(' '.join(sys.argv))
     
 task_dict = {
-    'DNAS-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},
-    'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},
-    'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2], 'gamma': [0.25, 0.50, 0.75]}},
+    'DNAS-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, },
+    'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, },
+    'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, },
+    
+    'DNAS-50':     { 'GFLOPS': 50,  'PARAMS': 34.84, },
+    'DNAS-40':     { 'GFLOPS': 40,  'PARAMS': 34.84, },
+    'DNAS-30':     { 'GFLOPS': 30,  'PARAMS': 34.84, },
+    
 
     'DNAS-S1-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
     'DNAS-S1-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
@@ -149,7 +154,7 @@ def main():
     MetaMN = MetaMatchingNetwork(cfg)
     
     # number of choice blocks in supernet
-    choice_num = model.choices # First bottlecsp
+    choice_num = 123 # First bottlecsp
     if args.local_rank == 0:
         logger.info('Supernet created, param count: %.2f M', (
             sum([m.numel() for m in model.parameters()]) / 1e6))
@@ -172,11 +177,11 @@ def main():
         exit()
 
     # optionally resume from a checkpoint
-    optimizer_state = None
-    resume_epoch = None
-    if cfg.AUTO_RESUME:
-        optimizer_state, resume_epoch = resume_checkpoint(
-            model, cfg.RESUME_PATH)
+    # optimizer_state = None
+    # resume_epoch = None
+    # if cfg.AUTO_RESUME:
+    #     optimizer_state, resume_epoch = resume_checkpoint(
+    #         model, cfg.RESUME_PATH)
 
     # create optimizer and resume from checkpoint
     if args.resume_theta_training:
@@ -185,8 +190,8 @@ def main():
     optimizer, theta_optimizer = create_optimizer_supernet(cfg, model, USE_APEX)
     model.module.update_main() if is_parallel(model) else model.update_main()
     
-    if optimizer_state is not None:
-        optimizer.load_state_dict(optimizer_state['optimizer'])
+    # if optimizer_state is not None:
+    #     optimizer.load_state_dict(optimizer_state['optimizer'])
 
     gs = int(max(model.stride))  # grid size (max stride)
     imgsz, imgsz_test = [check_img_size(x, gs) for x in [cfg.DATASET.IMAGE_SIZE] * 2]
@@ -215,9 +220,9 @@ def main():
     # create learning rate scheduler
     lr_scheduler, num_epochs = create_supernet_scheduler(cfg, optimizer)
 
-    start_epoch = resume_epoch if resume_epoch is not None else 0
-    if start_epoch > 0:
-        lr_scheduler.step(start_epoch)
+    # start_epoch = resume_epoch if resume_epoch is not None else 0
+    # if start_epoch > 0:
+    #     lr_scheduler.step(start_epoch)
 
     if args.local_rank == 0:
         logger.info('Scheduled epochs: %d', num_epochs)
@@ -294,28 +299,17 @@ def main():
         print('FREEZE_EPOCH', cfg.FREEZE_EPOCH)
         write_thetas(output_dir, model.module.thetas_main if is_parallel(model) else model.thetas_main, -1)
         torch.save(model.state_dict(), os.path.join(output_dir, f'model_0.pt'))
-        best_arhcs = train_epoch_zero_cost_EA(model, dataloader_weight, optimizer, cfg, device=device, task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
+        best_arhcs = train_epoch_zero_cost_EA(args.zc, model, dataloader_weight, optimizer, cfg, device=device, task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
                                    cycles=100, est=model_est, logger=logger)
 
     except KeyboardInterrupt:
         pass
 
 
-def write_thetas(output_dir, thetas, epoch):
-    # alpha_distributions = []
-    # beta_distributions = []
-    # for theta in thetas:
-    #     alpha=theta().detach().cpu().numpy()
-    #     alpha_distributions.append(alpha)
-    #     beta_distributions.append(softmax(alpha))
-    alpha_distributions = [
-        [theta().detach().cpu().numpy() for theta in theta_module] 
-            for theta_module in thetas
-    ]
-    beta_distributions = [
-        [nn.functional.softmax(theta()).detach().cpu().numpy() for theta in theta_module] 
-            for theta_module in thetas
-    ]
+def write_thetas(output_dir, thetas, epoch, temperature=1.0):
+    alpha_distributions = stringify_theta(thetas)
+    beta_distributions  = stringify_theta(thetas, True, temperature)
+    
     with open(os.path.join(output_dir, 'alpha_distribution.txt'), 'a') as f:
         f.write(f'epoch: {epoch}')
         f.writelines(str(alpha_distributions)+'\n')
