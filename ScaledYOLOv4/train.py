@@ -191,8 +191,8 @@ def train(hyp, opt, device, tb_writer=None):
         # cf = torch.bincount(c.long(), minlength=nc) + 1.
         # model._initialize_biases(cf.to(device))
         plot_labels(labels, save_dir=log_dir)
-        if tb_writer:
-            tb_writer.add_histogram('classes', c, 0)
+        # if tb_writer:
+        #     tb_writer.add_histogram('classes', c, 0)
 
         # Check anchors
         if not opt.noautoanchor:
