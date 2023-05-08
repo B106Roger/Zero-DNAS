@@ -39,8 +39,8 @@ from lib.models.structures.supernet import gen_supernet
 from lib.models.PrioritizedBoard import PrioritizedBoard
 from lib.models.MetaMatchingNetwork import MetaMatchingNetwork
 from lib.config import DEFAULT_CROP_PCT, IMAGENET_DEFAULT_STD, IMAGENET_DEFAULT_MEAN
-from lib.utils.util import parse_config_args, get_logger, \
-    create_optimizer_supernet, create_supernet_scheduler, stringify_theta
+from lib.utils.util import convert_lowercase, get_logger, \
+    create_optimizer_supernet, create_supernet_scheduler, stringify_theta, write_thetas, export_thetas
 from lib.utils.datasets import create_dataloader
 from lib.utils.kd_utils import FeatureAdaptation
 from lib.models.blocks.yolo_blocks import Conv, ConvNP, BottleneckCSP, BottleneckCSP2, set_algorithm_type
@@ -49,28 +49,71 @@ from lib.utils.torch_utils import select_device
 from lib.utils.attentive_sampling import collect_samples
 from scipy.special import softmax
 from lib.models.AttentiveNasSampler import ArchSampler
+from lib.config import cfg
+import argparse
 
-def config_backup(backup_path, args):
-    os.makedirs(backup_path, exist_ok=True)
-    shutil.copy(args.cfg,  os.path.join(backup_path, os.path.basename(args.cfg)))
-    shutil.copy(args.hyp,  os.path.join(backup_path, os.path.basename(args.hyp)))
-    shutil.copy(args.data, os.path.join(backup_path, os.path.basename(args.data)))
-    shutil.copy('lib/core/train.py', os.path.join(backup_path, 'core_train.py'))
-    shutil.copy(f'{__file__}', os.path.join(backup_path, os.path.basename(__file__)))
-    shutil.copy('lib/models/structures/supernet.py', os.path.join(backup_path, 'supernet.py'))
-    shutil.copy('lib/models/blocks/yolo_blocks.py', os.path.join(backup_path, 'yolo_blocks.py'))
-    shutil.copy('lib/models/builders/build_supernet.py', os.path.join(backup_path, 'build_supernet.py'))
+def config_backup(config_bakup_dir, code_backup_dir, args):
+    os.makedirs(config_bakup_dir, exist_ok=True)
+    os.makedirs(code_backup_dir,  exist_ok=True)
     
-    
-    
-    with open(os.path.join(backup_path, 'commandline.txt'), 'w') as f:
+    shutil.copy(args.cfg,  os.path.join(config_bakup_dir, os.path.basename(args.cfg)))
+    shutil.copy(args.hyp,  os.path.join(config_bakup_dir, os.path.basename(args.hyp)))
+    shutil.copy(args.data, os.path.join(config_bakup_dir, os.path.basename(args.data)))
+    shutil.copy(args.model,os.path.join(config_bakup_dir, os.path.basename(args.model)))
+    with open(os.path.join(config_bakup_dir, 'commandline.txt'), 'w') as f:
         f.writelines(' '.join(sys.argv))
+        
+    shutil.copy('lib/core/train.py',                     os.path.join(code_backup_dir, 'core_train.py'))
+    shutil.copy(f'{__file__}',                           os.path.join(code_backup_dir, os.path.basename(__file__)))
+    shutil.copy('lib/models/structures/supernet.py',     os.path.join(code_backup_dir, 'supernet.py'))
+    shutil.copy('lib/models/blocks/yolo_blocks.py',      os.path.join(code_backup_dir, 'yolo_blocks.py'))
+    shutil.copy('lib/models/builders/build_supernet.py', os.path.join(code_backup_dir, 'build_supernet.py'))
     
+def parse_config_args(exp_name):
+    parser = argparse.ArgumentParser(description=exp_name)
+    ###################################################################################
+    # Commonly Used Parameter !!
+    ###################################################################################
+    parser.add_argument('--cfg',  type=str, help='configuration of cream')
+    parser.add_argument('--data', type=str, default='config/dataset/voc.yaml', help='data.yaml path')
+    parser.add_argument('--hyp',  type=str, default='config/dataset/training/hyp.scratch.yaml', help='hyperparameters path, i.e. data/hyp.scratch.yaml')
+    parser.add_argument('--model',type=str, default='config/model/Search-YOLOv4-CSP.yaml', help='model path')
+    parser.add_argument('--exp_name', type=str, default='exp', help="name of experiments")
+    parser.add_argument('--nas', default='', type=str, help='NAS-Search-Space and hardware constraint combination')
+    parser.add_argument('--zc',  default='', type=str, help='Zero Cost Metrics Type')
+    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    ###################################################################################
+    
+    
+    ###################################################################################
+    # Seldom Used Parameter
+    ###################################################################################
+    parser.add_argument('--local_rank', type=int, default=0, help='local_rank')
+    parser.add_argument('--rect', action='store_true', help='rectangular training')
+    parser.add_argument('--cache-images', action='store_true', help='cache images for faster training')
+    parser.add_argument('--single-cls', action='store_true', help='train as single-class dataset')
+    parser.add_argument('--collect-samples', type=int, default=0, help='Sample a lot of different architectures with corresponding flops, if not 0 then samples specified number and exits the programm')
+    parser.add_argument('--collect-synflows', type=int, default=0, help='Sample a lot of different architectures with corresponding synflows, if not 0 then samples specified number and exits the programm')
+    parser.add_argument('--resume-theta-training', default='', type=str, help='load pretrained thetas')
+    ###################################################################################
+    
+    
+
+    
+    args = parser.parse_args()
+
+    cfg.merge_from_file(args.cfg)
+    cfg.exp_name = args.exp_name
+    converted_cfg = convert_lowercase(cfg)
+
+    return args, converted_cfg
+
 task_dict = {
     'DNAS-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, },
     'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, },
     'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, },
     
+    'DNAS-60':     { 'GFLOPS': 60,  'PARAMS': 34.84, },
     'DNAS-50':     { 'GFLOPS': 50,  'PARAMS': 34.84, },
     'DNAS-40':     { 'GFLOPS': 40,  'PARAMS': 34.84, },
     'DNAS-30':     { 'GFLOPS': 30,  'PARAMS': 34.84, },
@@ -89,15 +132,24 @@ task_dict = {
 
 def main():
     args, cfg = parse_config_args('super net training')
+    with open(args.model ) as f:
+        model_args   = yaml.load(f, Loader=yaml.FullLoader)
+    search_space = model_args['search_space']
+    
     task_name = args.nas if args.nas != '' else 'DNAS-25'
     TASK_FLOPS      = task_dict[task_name]['GFLOPS']     # e.g TASK_FLOPS  = 5  means 50 GFLOPs
     TASK_PARAMS     = task_dict[task_name]['PARAMS']     # e.g TASK_PARAMS = 32 means 32 million parameters.
-    SEARCH_SPACES   = task_dict[task_name]['CHOICES']
+    SEARCH_SPACES   = model_args['search_space']
     FLOP_RESOLUTION = (None, 3, cfg.search_resolution, cfg.search_resolution)
     
     output_dir = os.path.join(cfg.SAVE_PATH, cfg.exp_name)
-    output_bakup_dir = os.path.join(output_dir, 'config')
-    config_backup(output_bakup_dir, args)
+    config_bakup_dir = os.path.join(output_dir, 'config')
+    code_backup_dir  = os.path.join(output_dir, 'code')
+    model_dir        = os.path.join(output_dir, 'model')
+    
+    os.makedirs(model_dir, exist_ok=True)
+    
+    config_backup(config_bakup_dir, code_backup_dir, args)
 
     if args.local_rank == 0:
         if not os.path.isdir(output_dir):
@@ -134,17 +186,15 @@ def main():
     BottleneckCSP.set_search_space(cfg.search_space.BOTTLENECK_CSP)
     BottleneckCSP2.set_search_space(cfg.search_space.BOTTLENECK_CSP2)
     # generate supernet
-    print('SEARCH_SPACES', SEARCH_SPACES)
+    # print('SEARCH_SPACES', SEARCH_SPACES)
     model, sta_num, resolution = gen_supernet(
-        flops_minimum=cfg.SUPERNET.FLOPS_MINIMUM,
-        flops_maximum=cfg.SUPERNET.FLOPS_MAXIMUM,
-        choices=SEARCH_SPACES,
+        model_args,
         num_classes=cfg.DATASET.NUM_CLASSES,
-        drop_rate=cfg.NET.DROPOUT_RATE,
-        global_pool=cfg.NET.GP,
-        resunit=cfg.SUPERNET.RESUNIT,
-        dil_conv=cfg.SUPERNET.DIL_CONV,
-        slice=cfg.SUPERNET.SLICE,
+        # drop_rate=cfg.NET.DROPOUT_RATE,
+        # global_pool=cfg.NET.GP,
+        # resunit=cfg.SUPERNET.RESUNIT,
+        # dil_conv=cfg.SUPERNET.DIL_CONV,
+        # slice=cfg.SUPERNET.SLICE,
         verbose=cfg.VERBOSE,
         logger=logger,
         init_temp=5.0)
@@ -296,35 +346,18 @@ def main():
     # FREEZE_EPOCH=40
     try:
         print('task_flops', TASK_FLOPS)
-        print('FREEZE_EPOCH', cfg.FREEZE_EPOCH)
         write_thetas(output_dir, model.module.thetas_main if is_parallel(model) else model.thetas_main, -1)
         torch.save(model.state_dict(), os.path.join(output_dir, f'model_0.pt'))
-        best_arhcs = train_epoch_zero_cost_EA(args.zc, model, dataloader_weight, optimizer, cfg, device=device, task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
+        best_archs, historical_best = train_epoch_zero_cost_EA(args.zc, model, dataloader_weight, optimizer, cfg, device=device, task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
                                    cycles=100, est=model_est, logger=logger)
-
+        # Export Model Config
+        for topk, arch_info in enumerate(best_archs):
+            filename = os.path.join(model_dir, f'{args.zc}-Top{topk+1}_f{TASK_FLOPS}.yaml')
+            export_thetas(arch_info['arch'], model, model.model_args, filename)
+        filename = os.path.join(model_dir, f'{args.zc}-best_f{TASK_FLOPS}.yaml')
+        export_thetas(historical_best['arch'], model, model.model_args, filename)
     except KeyboardInterrupt:
         pass
-
-
-def write_thetas(output_dir, thetas, epoch, temperature=1.0):
-    alpha_distributions = stringify_theta(thetas)
-    beta_distributions  = stringify_theta(thetas, True, temperature)
-    
-    with open(os.path.join(output_dir, 'alpha_distribution.txt'), 'a') as f:
-        f.write(f'epoch: {epoch}')
-        f.writelines(str(alpha_distributions)+'\n')
-    with open(os.path.join(output_dir, 'beta_distribution.txt'), 'a') as f:
-        f.write(f'epoch: {epoch}')
-        f.writelines(str(beta_distributions)+'\n')
-
-def write_final_thetas(output_dir, thetas):
-    beta_distributions = []
-    for theta in thetas:
-        alpha=theta().detach().cpu().numpy()
-        beta_distributions.append(softmax(alpha))
-
-    with open(os.path.join(output_dir, 'thetas.txt'), 'w') as f:
-        f.writelines(str(beta_distributions)+'\n')
 
 if __name__ == '__main__':
     main()

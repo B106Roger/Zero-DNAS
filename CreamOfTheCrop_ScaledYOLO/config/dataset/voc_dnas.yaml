@@ -1,0 +1,15 @@
+# train and val datasets (image directory or *.txt file with image paths)
+train_weight: data/VOC2007/train_weight.txt  # part of trainval images (118k images for trainval)
+train_thetas: data/VOC2007/train_thetas.txt  # part of trainval images (118k images for trainval)
+val: data/VOC2007/test.txt      # 5k images
+test: data/VOC2007/test.txt  # 20k images for submission to https://competitions.codalab.org/competitions/20794
+
+# number of classes
+nc: 20
+
+# class names
+names: [
+        "person", "chair", "horse", "bottle", "bus", "cat", "sofa", 
+        "aeroplane", "car", "dog", "tvmonitor", "train", "boat", 
+        "cow", "sheep", "diningtable", "bird", "motorbike", "pottedplant", "bicycle"
+]

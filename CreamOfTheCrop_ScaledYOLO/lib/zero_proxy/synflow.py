@@ -3,31 +3,32 @@ from tqdm import tqdm
 import json
 
 
+#convert params to their abs. Keep sign for converting it back.
+@torch.no_grad()
+def linearize(model):
+    signs = {}
+    for name, param in model.state_dict().items():
+        signs[name] = torch.sign(param)
+        param.abs_()
+    return signs
+
+#convert to orig values
+@torch.no_grad()
+def nonlinearize(model, signs):
+    for name, param in model.state_dict().items():
+        if 'weight_mask' not in name:
+            param.mul_(signs[name])
+                
+
 def calculate_synflow(model, arch_prob, inputs, targets, _=None):
 
     device = inputs.device
-    is_linear = True
+    # is_linear = True
     DEBUG = False
 
-    #convert params to their abs. Keep sign for converting it back.
-    @torch.no_grad()
-    def linearize(model):
-        signs = {}
-        for name, param in model.state_dict().items():
-            signs[name] = torch.sign(param)
-            param.abs_()
-        return signs
-
-    #convert to orig values
-    @torch.no_grad()
-    def nonlinearize(model, signs):
-        for name, param in model.state_dict().items():
-            if 'weight_mask' not in name:
-                param.mul_(signs[name])
-
     # keep signs of all params
-    if is_linear:
-        signs = linearize(model)
+    # if is_linear:
+    #     signs = linearize(model)
     
     # Compute gradients with input of 1s 
     model.zero_grad()
@@ -71,8 +72,8 @@ def calculate_synflow(model, arch_prob, inputs, targets, _=None):
     grads_abs = get_layer_metric_array(model, synflow)
     # print('model.blocks[-1].training', model.blocks[-1].training)
     # apply signs of all params
-    if is_linear:
-        nonlinearize(model, signs)
+    # if is_linear:
+    #     nonlinearize(model, signs)
 
     return torch.tensor(grads_abs).sum()
 

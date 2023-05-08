@@ -26,11 +26,6 @@ PROXY_DICT = {
     'snip'  :  snip.calculate_snip,
     'synflow': synflow.calculate_synflow
 }
-# PROXY_DICT = {
-#     'snip'  : (lambda x,imgs: snip.calculate_snip(model, x['arch'], imgs, targets, optimizer)),
-#     'synflow':(lambda x,imgs: synflow.calculate_synflow(model, x['arch'], imgs, targets))
-# }
-
 
 def sample_arch(search_space):
     arch = []
@@ -212,15 +207,14 @@ def _EA_sample(sample_function, num, info_funcs, constraints=None):
     """
     patience = 0
     arches = []
-    print('EA Sampling : ', end='')
     while num:
         arch_info = {'arch': sample_function(), 'arch_type': 'continuous'}
         get_model_info(arch_info, info_funcs)
         
         if constraints is not None:
             if not fullfill_constraints(arch_info, constraints):
-                print(f'{num:3d}/{patience:3d} {arch_info["flops"]:5.2f}\r', end='')
                 patience+=1
+                if patience > 10: print(f'EA Sampling : {num:3d}/{patience:3d} {arch_info["flops"]:5.2f}\r', end='')
                 continue
         
         arches.append(arch_info)
@@ -365,6 +359,8 @@ def train_epoch_zero_cost_EA(proxy_name, model, dataloader, optimizer, cfg, devi
         # {'constraint_name' : 'params', 'operation' : operator.lt, 'value' : task_params},
     ]
     
+    if proxy_name == 'synflow' : signs = synflow.linearize(model)
+    
     ##############################################
     # Show Largest Network for Debug
     ##############################################
@@ -382,7 +378,10 @@ def train_epoch_zero_cost_EA(proxy_name, model, dataloader, optimizer, cfg, devi
     s = f"small_arch => FLOPS: {small_arch['flops']:.2f} Params: {small_arch['params']:.2f} {proxy_name}: {small_arch[proxy_name]:e}"
     logger.info(s)
     logger.info(f"small_arch => Architecture : {str(small_arch['arch'])}")
-    exit()
+
+    res = export_thetas(small_arch['arch'], model, model.model_args, './test123.yaml')
+    # print(res)
+    # exit()
     # manually_arch = [
     #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1.])}, 
     #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([1., 0.])}, 
@@ -410,7 +409,7 @@ def train_epoch_zero_cost_EA(proxy_name, model, dataloader, optimizer, cfg, devi
     RANDOM_COUNT     = 2
     DISCARD_COUNT    = MUTATION_COUNT + CROSSOVER_COUNT + RANDOM_COUNT
     TOPK             = 5
-    cycles           = 1000
+    cycles           = 1
     
     sample_func = lambda : naive_model.random_sampling()
     pools = _EA_sample(sample_func, POPULATION_COUNT, info_funcs, constraints)
@@ -480,12 +479,14 @@ def train_epoch_zero_cost_EA(proxy_name, model, dataloader, optimizer, cfg, devi
         
     
     logger.info('End Of Algorithm')
-    pools = sorted(pools, key=lambda x: x[proxy_name])
-    for idx, arch_info in enumerate(pools[-TOPK:]):
-        s = f"Pool Top{TOPK-idx} => FLOPS: {arch_info['flops']:.2f} Params: {arch_info['params']:.2f} {proxy_name}: {arch_info[proxy_name]:e}"
+    pools = sorted(pools, key=lambda x: x[proxy_name], reverse=True)
+    for idx, arch_info in enumerate(pools[:TOPK]):
+        s = f"Pool Top{idx+1} => FLOPS: {arch_info['flops']:.2f} Params: {arch_info['params']:.2f} {proxy_name}: {arch_info[proxy_name]:e}"
         logger.info(s)
-        logger.info(f"Pool Top{TOPK-idx} => Architecture : {str(arch_info['arch'])}")
+        logger.info(f"Pool Top{idx+1} => Architecture : {str(arch_info['arch'])}")
 
+    if proxy_name == 'synflow' : synflow.nonlinearize(model, signs)
+    return pools[:TOPK], best_arch
 
 ##############################
 # Train Sensitive

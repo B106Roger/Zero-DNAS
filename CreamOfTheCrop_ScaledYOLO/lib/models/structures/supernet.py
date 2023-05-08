@@ -49,23 +49,23 @@ class SuperNet(nn.Module):
             channel_multiplier=1.0,
             pad_type='',
             act_layer=nn.ReLU,
-            drop_rate=0.,
-            drop_path_rate=0.,
-            slice=4,
+            # drop_rate=0.,
+            # drop_path_rate=0.,
+            # slice=4,
             se_kwargs=None,
             norm_layer=nn.BatchNorm2d,
             logger=None,
             norm_kwargs=None,
-            global_pool='avg',
-            resunit=False,
-            dil_conv=False,
+            # global_pool='avg',
+            # resunit=False,
+            # dil_conv=False,
             verbose=False,
             init_temp=3):
         super(SuperNet, self).__init__()
         block_args = model_args['backbone'] + model_args['head']
         self.num_classes = num_classes
         self.num_features = num_features
-        self.drop_rate = drop_rate
+        # self.drop_rate = drop_rate
         self._in_chs = in_chans
         self.logger = logger
         # self.hetero_choices = [8, 4, 2] #from n_bottlenecks choices
@@ -78,6 +78,7 @@ class SuperNet(nn.Module):
         # self.block_to_choice_map = []
         # self.ignore_stages = [0, 1, 2, 4, 6, 8, 10, 11, 12, 14, 15, 17, 18, 19, 21, 22, 23, 25]
         self.temperature = init_temp
+        self.model_args = model_args
         # self._initialize_weights()
         # self.map_choices_to_blocks(choices)
         # self.thetas = self.initialize_thetas(block_args) # current thetas
@@ -150,7 +151,7 @@ class SuperNet(nn.Module):
         """
         # Pass data through stem
         # print('Initial shape:', x.shape)
-        SHOW_FEATURE_STATS = True
+        SHOW_FEATURE_STATS = False
         keys = sorted(self.search_space.keys())
         if distributions is None:
             distributions = self.softmax_sampling()
@@ -656,18 +657,15 @@ class Classifier(nn.Module):
     def forward(self, x):
         return self.classifier(x)
 
-def gen_supernet(flops_minimum=0, flops_maximum=600, choices=None, **kwargs):
-    print('choices: ', choices)
-    if choices is None:
-        print('choices is none !! please use correct choices')
+def gen_supernet(model_args, **kwargs):
+
     # choices = {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]} # big
     # choices = {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]} # tiny
-    model_config = 'Search-YOLOv4-CSP.yaml'
-    with open(model_config ) as f:
-        model_args   = yaml.load(f, Loader=yaml.FullLoader)
-    search_space = model_args['search_space']
+
+    choices = model_args['search_space']
     blocks_args     = model_args['backbone'] + model_args['head']
     
+    print('choices: ', choices)
 
     # exit()
     #1 4 0 0

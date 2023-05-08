@@ -12,12 +12,14 @@ anchors:
 search_space:
   BottleneckCSP_Search:
     gamma_space: [0.25, 0.50, 0.75]
-    bottleneck_space: [0, 1, 2]
+    bottleneck_space: [2,4,6,8]
+    # bottleneck_space: [0, 1, 2]
     # bottleneck_space: [0, 1]
 
   BottleneckCSP2_Search:
     gamma_space: [0.25, 0.50, 0.75]
-    bottleneck_space: [0, 1, 2]
+    bottleneck_space: [0,2,4,6]
+    # bottleneck_space: [0, 1, 2]
     # bottleneck_space: [0, 1]
 
 # yolov4-csp backbone

@@ -40,9 +40,9 @@ __C.DATASET.PIN_MEM = True
 __C.DATASET.VAL_BATCH_MUL = 4
 # model configs
 __C.NET = CN()
-__C.NET.SELECTION = 14
-__C.NET.GP = 'avg'  # type of global pool ["avg", "max", "avgmax", "avgmaxc"]
-__C.NET.DROPOUT_RATE = 0.0  # dropout rate
+# __C.NET.SELECTION = 14
+# __C.NET.GP = 'avg'  # type of global pool ["avg", "max", "avgmax", "avgmaxc"]
+# __C.NET.DROPOUT_RATE = 0.0  # dropout rate
 # model ema parameters
 __C.NET.EMA = CN()
 __C.NET.EMA.USE = True
@@ -85,7 +85,7 @@ __C.TEMPERATURE.INIT= 5.0
 __C.TEMPERATURE.FINAL=0.1
 __C.UPDATE_METHOD='ver1'
 # data augmentation parameters
-__C.AUGMENTATION = CN()
+# __C.AUGMENTATION = CN()
 
     
           
@@ -96,13 +96,13 @@ __C.AUGMENTATION = CN()
     
     
   
-__C.AUGMENTATION.AA = 'rand-m9-mstd0.5'
-__C.AUGMENTATION.COLOR_JITTER = 0.4
-__C.AUGMENTATION.RE_PROB = 0.2  # random erase prob
-__C.AUGMENTATION.RE_MODE = 'pixel'  # random erase mode
-__C.AUGMENTATION.MIXUP = 0.0  # mixup alpha
-__C.AUGMENTATION.MIXUP_OFF_EPOCH = 0  # turn off mixup after this epoch
-__C.AUGMENTATION.SMOOTHING = 0.1  # label smoothing parameters
+# __C.AUGMENTATION.AA = 'rand-m9-mstd0.5'
+# __C.AUGMENTATION.COLOR_JITTER = 0.4
+# __C.AUGMENTATION.RE_PROB = 0.2  # random erase prob
+# __C.AUGMENTATION.RE_MODE = 'pixel'  # random erase mode
+# __C.AUGMENTATION.MIXUP = 0.0  # mixup alpha
+# __C.AUGMENTATION.MIXUP_OFF_EPOCH = 0  # turn off mixup after this epoch
+# __C.AUGMENTATION.SMOOTHING = 0.1  # label smoothing parameters
 # batch norm parameters (only works with gen_efficientnet based models
 # currently)
 __C.BATCHNORM = CN()
@@ -111,18 +111,18 @@ __C.BATCHNORM.BN_TF = False
 __C.BATCHNORM.BN_MOMENTUM = 0.1  # batchnorm momentum override
 __C.BATCHNORM.BN_EPS = 1e-5  # batchnorm eps override
 # supernet training hyperparameters
-__C.SUPERNET = CN()
-__C.SUPERNET.UPDATE_ITER = 1300
-__C.SUPERNET.SLICE = 4
-__C.SUPERNET.POOL_SIZE = 10
-__C.SUPERNET.RESUNIT = False
-__C.SUPERNET.DIL_CONV = False
-__C.SUPERNET.UPDATE_2ND = True
-__C.SUPERNET.FLOPS_MAXIMUM = 600
-__C.SUPERNET.FLOPS_MINIMUM = 0
-__C.SUPERNET.PICK_METHOD = 'meta'  # pick teacher method
-__C.SUPERNET.META_STA_EPOCH = 20  # start using meta picking method
-__C.SUPERNET.HOW_TO_PROB = 'pre_prob'  # sample method
-__C.SUPERNET.PRE_PROB = (0.05, 0.2, 0.05, 0.5, 0.05, 0.15)  # sample prob in 'pre_prob'
+# __C.SUPERNET = CN()
+# __C.SUPERNET.UPDATE_ITER = 1300
+# __C.SUPERNET.SLICE = 4
+# __C.SUPERNET.POOL_SIZE = 10
+# __C.SUPERNET.RESUNIT = False
+# __C.SUPERNET.DIL_CONV = False
+# __C.SUPERNET.UPDATE_2ND = True
+# __C.SUPERNET.FLOPS_MAXIMUM = 600
+# __C.SUPERNET.FLOPS_MINIMUM = 0
+# __C.SUPERNET.PICK_METHOD = 'meta'  # pick teacher method
+# __C.SUPERNET.META_STA_EPOCH = 20  # start using meta picking method
+# __C.SUPERNET.HOW_TO_PROB = 'pre_prob'  # sample method
+# __C.SUPERNET.PRE_PROB = (0.05, 0.2, 0.05, 0.5, 0.05, 0.15)  # sample prob in 'pre_prob'
 # Experiment Setting
 __C.BETA_REG = False

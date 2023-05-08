@@ -200,7 +200,7 @@ class BottleneckCSP2_Search(GeneralOpeartor_Search):
         self.search_space['gamma']      = gamma_space
         self.search_space['n_bottlenecks'] = bottleneck_space
         
-        e=max(gamma_space)
+        e = max(gamma_space)
         channel_values = [int((gamma+0.5)*c2) for gamma in gamma_space]
         n = max(bottleneck_space) 
         
@@ -284,7 +284,9 @@ class BottleneckCSP2_Search(GeneralOpeartor_Search):
 class Composite_Search(GeneralOpeartor_Search):
     def __init__(self, operators):
         super(Composite_Search, self).__init__()
-        self.search_space = {'operator_choice' : list(range(len(operators)))}
+        # self.search_space = {'operator_choice' : list(range(len(operators)))}
+        self.search_space = None
+        
         self.operators = operators
         self.block_name = f'{self.__class__.__name__}_op{len(operators)}'
         
@@ -296,7 +298,7 @@ class Composite_Search(GeneralOpeartor_Search):
         return out
     
     def init_arch_parameter(self):
-        arch = super(BottleneckCSP2_Search).init_arch_parameter()
+        arch = super(Composite_Search).init_arch_parameter()
         arch['operators'] = []
         for operator in self.operators:
             if 'Search' in operator.__class__.__name__:

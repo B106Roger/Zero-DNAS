@@ -9,6 +9,9 @@ import logging
 import torch.nn as nn
 import torch
 import math
+import yaml
+import os
+import copy
 from torch import optim as optim
 from thop import profile, clever_format
 
@@ -243,34 +246,6 @@ def convert_lowercase(cfg):
     return cfg
 
 
-def parse_config_args(exp_name):
-    parser = argparse.ArgumentParser(description=exp_name)
-    parser.add_argument('--cfg', type=str,
-                        default='../experiments/workspace/retrain/retrain.yaml',
-                        help='configuration of cream')
-    parser.add_argument('--local_rank', type=int, default=0, help='local_rank')
-    parser.add_argument('--exp_name', type=str, default='exp', help="name of experiments")
-    parser.add_argument('--data', type=str, default='data/coco128.yaml', help='data.yaml path')
-    parser.add_argument('--hyp', type=str, default='', help='hyperparameters path, i.e. data/hyp.scratch.yaml')
-    parser.add_argument('--rect', action='store_true', help='rectangular training')
-    parser.add_argument('--cache-images', action='store_true', help='cache images for faster training')
-    parser.add_argument('--single-cls', action='store_true', help='train as single-class dataset')
-    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-    parser.add_argument('--collect-samples', type=int, default=0, help='Sample a lot of different architectures with corresponding flops, if not 0 then samples specified number and exits the programm')
-    parser.add_argument('--collect-synflows', type=int, default=0, help='Sample a lot of different architectures with corresponding synflows, if not 0 then samples specified number and exits the programm')
-    parser.add_argument('--resume-theta-training', default='', type=str, help='load pretrained thetas')
-    parser.add_argument('--nas', default='', type=str, help='NAS-Search-Space and hardware constraint combination')
-    parser.add_argument('--zc',  default='', type=str, help='Zero Cost Metrics Type')
-    
-    args = parser.parse_args()
-
-    cfg.merge_from_file(args.cfg)
-    cfg.exp_name = args.exp_name
-    converted_cfg = convert_lowercase(cfg)
-
-    return args, converted_cfg
-
-
 def get_model_flops_params(model, input_size=(1, 3, 224, 224)):
     input = torch.randn(input_size)
     macs, params = profile(deepcopy(model), inputs=(input,), verbose=False)
@@ -326,3 +301,53 @@ def stringify_theta(thetas, normalize=False, temperature=1.):
                      
         write_arch.append(tmp_arch)
     return write_arch
+
+
+def thetas_to_archtecture(thetas, model):
+    export_thetas = copy.deepcopy(thetas)
+    theta_idx = 0
+    for depth, m in enumerate(model.blocks):
+        if 'Search' in m.__class__.__name__:
+            if 'Composite_Search' in m.__class__.__name__:
+                best_option_idx = thetas[theta_idx]['operator_choice'].argmax().cpu().numpy()
+                export_thetas[theta_idx] = thetas[theta_idx]['operators'][best_option_idx]
+                ##############################################
+                m = m.operators[best_option_idx]
+                if 'Search' in m.__class__.__name__:
+                    search_space = m.search_space
+                    for key in search_space.keys():
+                        best_option_idx = thetas[theta_idx][key].argmax().cpu().numpy()
+                        export_thetas[theta_idx][key] = search_space[key][best_option_idx]
+            else:
+                search_space = m.search_space
+                for key in search_space.keys():
+                    best_option_idx = thetas[theta_idx][key].argmax().cpu().numpy()
+                    export_thetas[theta_idx][key] = search_space[key][best_option_idx]
+            theta_idx += 1
+    return export_thetas
+
+def export_thetas(thetas, model, origin_config, output_file):
+    export_config = copy.deepcopy(origin_config)
+    discrete_thetas = thetas_to_archtecture(thetas, model)
+    gamma_list = []
+    theta_idx = 0
+    for part in ['backbone', 'head']:
+        for depth in range(len(export_config[part])):
+            f,n,m,arg = export_config[part][depth]
+            if 'Search' in m:
+                # Process Block Name
+                export_config[part][depth][2] = export_config[part][depth][2].replace('_Search','')
+                # Process Block Depth
+                if 'n_bottlenecks' in discrete_thetas[theta_idx].keys():
+                    export_config[part][depth][1] = discrete_thetas[theta_idx]['n_bottlenecks']
+                # Process Block Gamma
+                if 'gamma' in discrete_thetas[theta_idx].keys():
+                    gamma_list.append(discrete_thetas[theta_idx]['gamma'])
+                theta_idx += 1
+    export_config['csp_gammas'] = gamma_list
+    
+    with open(output_file, 'w') as f:
+        documents = yaml.dump(export_config, default_flow_style=True, sort_keys=False)
+        documents = documents.replace('Upsample', 'nn.Upsample')
+        f.write(documents)
+    return export_config
