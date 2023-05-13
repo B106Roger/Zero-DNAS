@@ -15,11 +15,11 @@ args = parser.parse_args()
 
 experiment_name = args.exp_name  #'VOC-NAS-SS-03'
 
-depth_search_space = ['8', '6', '4', '2']
-gamma_search_space = ['0.25', '0.50', '0.75']
-
-# depth_search_space = ['0','1','2'] 
+# depth_search_space = ['8', '6', '4', '2']
 # gamma_search_space = ['0.25', '0.50', '0.75']
+
+depth_search_space = ['0','1','2'] 
+gamma_search_space = ['0.25', '0.50', '0.75']
 
 experiment_path = Path(f'experiments/workspace/train/{experiment_name}/')
 thetas_path = experiment_path / 'thetas.txt'

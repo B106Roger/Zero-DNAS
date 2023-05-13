@@ -13,15 +13,16 @@ EVAL_METRICS: 'prec1'
 TTA: 0
 LOCAL_RANK: -1
 
+
+##############################################################################
 # Extra Option For Experiment
 BETA_REG: False
-
-
 DATASET:
   NUM_CLASSES: 20 #[Roger]1000
   IMAGE_SIZE: 416 # image patch size
   INTERPOLATION: 'bilinear' # Image resize interpolation type
   BATCH_SIZE: 8 # #[Roger]2 batch size
+SEARCH_RESOLUTION: 416 # calculate the flops of each block
 
 NET:
   GP: 'avg'
@@ -49,7 +50,17 @@ THETA_OPTIMIZER:
   WEIGHT_DECAY: 5e-4
 
 EPOCHS: 120
-META_LR: 1e-4
+##############################################################################
+FREEZE_EPOCH: 40
+TEMPERATURE:
+  DECAY: -0.045
+  MIN: -9999.99
+LOSS:
+  PARAM_LOSS: 0.01
+  FLOPS_LOSS: 0.1   # should be 0.1
+  DEPTH_LOSS: 0.01
+##############################################################################
+
 
 BATCHNORM:
   SYNC_BN: False

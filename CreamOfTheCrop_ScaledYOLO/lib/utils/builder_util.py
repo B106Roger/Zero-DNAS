@@ -2,9 +2,141 @@ import math
 import torch.nn as nn
 import re
 from copy import deepcopy
+from lib.models.blocks.yolo_blocks import *
+from lib.models.blocks.yolo_blocks_search import *
+
 from timm.utils import *
 from timm.models.layers.activations import Swish
 from timm.models.layers import CondConv2d, get_condconv_initializer
+
+
+def parse_model(d, ch):  # model_dict, input_channels(3)
+    print('\n%3s%18s%3s%10s  %-40s%-30s' % ('', 'from', 'n', 'params', 'module', 'arguments'))
+    anchors, nc, gd, gw = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple']
+    na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
+    no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)
+    # csp_gammas = d['csp_gammas']
+    # csp_bottle_count = 0
+    # gamma = d['csp_gammas']
+    # it = iter(gamma)
+    
+    stages = nn.ModuleList()
+    layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
+    for i, (f, n, m, args) in enumerate(d['backbone'] + d['head']):  # from, number, module, args
+        # blocks = nn.ModuleList()
+        # for j, (f, n, m, args) in enumerate(blocks_args):
+            #################################
+            # Common Args PreProcessing
+            #################################
+            for j, a in enumerate(args):
+                try:
+                    args[j] = eval(a) if isinstance(a, str) else a  # eval strings
+                except:
+                    pass
+            n = max(round(n * gd), 1) if n > 1 else n  # depth gain
+            m = eval(m) if isinstance(m, str) else m  # eval strings
+            block_args = {}
+            #################################
+            # Specific Args PreProcessing
+            #################################
+            if m in [nn.Conv2d, Conv, Bottleneck, SPP, DWConv, MixConv2d, Focus, CrossConv, BottleneckCSP, BottleneckCSP2, SPPCSP, VoVCSP, C3]:
+                
+                c1, c2 = ch[f], args[0]
+                
+
+                block_args['stride']  = 1 if len(args) < 3 else args[2]
+                
+
+                # Normal
+                # if i > 0 and args[0] != no:  # channel expansion factor
+                #     ex = 1.75  # exponential (default 2.0)
+                #     e = math.log(c2 / ch[1]) / math.log(2)
+                #     c2 = int(ch[1] * ex ** e)
+                # if m != Focus:
+
+                # c2 = make_divisible(c2 * gw, 8) if c2 != no else c2
+
+                # Experimental
+                # if i > 0 and args[0] != no:  # channel expansion factor
+                #     ex = 1 + gw  # exponential (default 2.0)
+                #     ch1 = 32  # ch[1]
+                #     e = math.log(c2 / ch1) / math.log(2)  # level 1-n
+                #     c2 = int(ch1 * ex ** e)
+                # if m != Focus:
+                #     c2 = make_divisible(c2, 8) if c2 != no else c2
+
+                args = [c1, c2, *args[1:]]
+                if m in [BottleneckCSP, BottleneckCSP2, SPPCSP, VoVCSP, C3]:
+                    args.insert(2, n)
+                    n = 1
+                    if  m in [BottleneckCSP, BottleneckCSP2]:
+                        try:
+                            args.insert(3, next(it))    # [input_channel(3), output_channel(arg[0]) / no, number, gamma]
+                        except StopIteration:
+                            raise Exception("Number of gammas (%d) is not suitable for the architecture.", len(gamma))
+            elif m in [HarDBlock, HarDBlock2]:
+                c1 = ch[f]
+                c2 = c1
+                args = [c1, *args[:]]
+            elif m is nn.BatchNorm2d:
+                args = [ch[f]]
+                c1 = c2 = ch[f]
+            elif m is Concat:
+                c1 = [ch[-1 if x == -1 else x + 1] for x in f]
+                c2 = sum(c1)
+            elif m is Detect:
+                c1 = [ch[x + 1] for x in f]
+                c2 = None
+                args.append([ch[x + 1] for x in f])
+                if isinstance(args[1], int):  # number of anchors
+                    args[1] = [list(range(args[1] * 2))] * len(f)
+            elif m is nn.Upsample or m is Upsample:
+                c1 = ch[f]
+                c2 = ch[f]
+                block_args['scale_factor'] = 2
+            ####################################################################
+            # Searching Operation
+            ####################################################################
+            elif m in [BottleneckCSP_Search, BottleneckCSP2_Search]:
+                c1, c2 = ch[f], args[0]
+                if len(args) == 1:
+                    gamma_space      = d['search_space'][m.__name__]['gamma_space']
+                    bottleneck_space = d['search_space'][m.__name__]['bottleneck_space']
+                    args = [c1, c2, gamma_space, bottleneck_space]
+                else:
+                    args = [c1, c2, *args[1:]]
+            elif m is Composite_Search:
+                pass
+            ####################################################################
+            
+            else:
+                c2 = ch[f]
+            
+            block_args['in_chs']  = c1
+            block_args['out_chs'] = c2
+            block_args['f']       = f
+            
+            block = m(*args)
+            block.block_arguments = block_args
+            
+            m_ = block
+            t = str(m)[8:-2].replace('lib.models.blocks.', '')  # module type
+            np = sum([x.numel() for x in m_.parameters()])  # number params
+            m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params
+            print('%3s%18s%3s%10.0f  %-40s%-30s' % (i, f, n, np, t, args))  # print
+            save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)  # append to savelist
+            layers.append(m_)
+            if m in [HarDBlock, HarDBlock2]:
+                c2 = m_.get_out_ch()
+                ch.append(c2)
+            else:
+                ch.append(c2)
+            
+            
+            stages.append(block)
+        
+    return stages, sorted(save)
+
 
 
 def parse_ksize(ss):
@@ -41,17 +173,20 @@ def decode_arch_def(
     return arch_args
 
 
-def modify_block_args(block_args, n_bottlenecks, gamma):
+def modify_block_args(block_args, n_bottlenecks, gamma=None, gamma_space=None):
     block_type = block_args['block_type']
     if block_type == 'bottlecsp':
         block_args['n_bottlenecks'] = n_bottlenecks #max number
-        block_args['gamma'] = gamma
+        if gamma: block_args['gamma'] = gamma
+        if gamma_space: block_args['gamma_space'] = gamma_space
     elif block_type == 'bottlecsp2':
         block_args['n_bottlenecks'] = n_bottlenecks #max number
-        block_args['gamma'] = gamma
+        if gamma: block_args['gamma'] = gamma
+        if gamma_space: block_args['gamma_space'] = gamma_space
     elif block_type == 'C3':
         block_args['n_bottlenecks'] = n_bottlenecks #max number
-        block_args['gamma'] = gamma
+        if gamma: block_args['gamma'] = gamma
+        if gamma_space: block_args['gamma_space'] = gamma_space
     # elif block_type == 'er':
     #     block_args['exp_kernel_size'] = kernel_size
     # else:
@@ -390,5 +525,6 @@ def efficientnet_init_weights(
 
     init_fn = init_fn or init_weight_goog
     for n, m in model.named_modules():
+        print(f'm={m} n={n}')
         init_fn(m, n, last_bn=last_bn)
         init_fn(m, n, last_bn=last_bn)

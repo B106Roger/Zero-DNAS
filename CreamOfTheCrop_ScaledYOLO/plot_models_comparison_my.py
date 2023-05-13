@@ -10,13 +10,13 @@ csp_names = ['YOLOv4', 'YOLOv4-P5']
 v5_names = ['YOLOv5-M', 'YOLOv5-L']
 nas_names = ['DNAS-25', 'DNAS-35', 'DNAS-45']
 
-mAP_csp = [71.5, 71.6]
+mAP_csp = [71.9, 72.5]
 # mAP_v5 = [73.9, 75]
 mAP_nas = [68.8, 70.9, 71.7]
 # mAP_mobile = [68]
 # mAP_ghost = [67]
 
-flop_csp = [60.7, 84.7]
+flop_csp = [50.7, 70.3]
 # flop_v5 = [99, 82]
 flop_nas = [26.2, 35.5, 46.1]
 # flop_mobile = [77]
@@ -66,7 +66,7 @@ plt.xlabel('GFLOP')
 plt.ylabel('mAP')
 plt.ylim(top=73)
 plt.xlim(left=20, right=90)
-plt.legend(['ScaledYOLO', 'YOLOv5', 'Ours'])
+plt.legend(['ScaledYOLO', 'YOLO-DNAS', 'Ours'])
 
 plt.tight_layout()
 plt.savefig(f'experiment_results/{experiment_name}2.png')

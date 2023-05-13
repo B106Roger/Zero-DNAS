@@ -1,0 +1,37 @@
+MODEL: 'Supernet_Training'
+SAVE_PATH: './experiments/workspace/train'
+SEED: 42 #44 #43 #42
+LOCAL_RANK: -1
+
+##############################################################################
+# Extra Option For Experiment
+DATASET:
+  NUM_CLASSES: 20 #[Roger]1000
+  IMAGE_SIZE: 416 # image patch size
+  INTERPOLATION: 'bilinear' # Image resize interpolation type
+  BATCH_SIZE: 8 # #[Roger]2 batch size
+SEARCH_RESOLUTION: 416 # calculate the flops of each block
+
+NET:
+  EMA:
+    USE: True
+    FORCE_CPU: False # force model ema to be tracked on CPU
+    DECAY: 0.9998
+
+OPT: 'sgd'
+LR: 0.01
+WEIGHT_DECAY: 0.0005
+MOMENTUM: 0.937
+THETA_OPTIMIZER:
+  OPT: 'adam'
+  OPT_EPS: 1e-2 # eps for adam
+  LR: 0.001
+  MOMENTUM: 0.0
+  WEIGHT_DECAY: 0.001 
+
+EPOCHS: 100
+FREEZE_EPOCH : 40 #40
+UPDATE_METHOD: 'ver1'
+TEMPERATURE:
+  INIT:  5.0
+  FINAL: 0.1

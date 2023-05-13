@@ -1,0 +1,69 @@
+AUTO_RESUME: False
+DATA_DIR: './data/imagenet'
+MODEL: 'Supernet_Training'
+RESUME_PATH: './experiments/workspace/train/resume.pth.tar'
+SAVE_PATH: './experiments/workspace/train'
+SEED: 42 #44 #43 #42
+LOG_INTERVAL: 50
+RECOVERY_INTERVAL: 0
+WORKERS: 3
+NUM_GPU: 3
+SAVE_IMAGES: False
+AMP: False
+OUTPUT: 'None'
+EVAL_METRICS: 'prec1'
+TTA: 0
+LOCAL_RANK: -1
+
+##############################################################################
+# Extra Option For Experiment
+BETA_REG: False
+DATASET:
+  NUM_CLASSES: 3
+  IMAGE_SIZE: 288 # image patch size
+  INTERPOLATION: 'bilinear' # Image resize interpolation type
+  BATCH_SIZE: 2 # batch size
+SEARCH_RESOLUTION: 288 # calculate the flops of each block
+
+NET:
+  GP: 'avg'
+  DROPOUT_RATE: 0.0
+
+  EMA:
+    USE: True
+    FORCE_CPU: False # force model ema to be tracked on CPU
+    DECAY: 0.9998
+
+SEARCH_SPACE:
+  BOTTLENECK_CSP: 0
+  BOTTLENECK_CSP2: 0
+
+OPT: 'sgd'
+LR: 0.01
+WEIGHT_DECAY: 0.0005
+THETA_OPTIMIZER:
+  OPT: 'adam'
+  OPT_EPS: 1e-2 # eps for adam
+  LR: 0.01
+  MOMENTUM: 0.0
+  WEIGHT_DECAY: 5e-4
+
+EPOCHS: 40
+META_LR: 1e-4
+##############################################################################
+BATCHNORM:
+  SYNC_BN: False
+
+SUPERNET:
+  UPDATE_ITER: 200
+  SLICE: 2
+  POOL_SIZE: 10
+  RESUNIT: False
+  DIL_CONV: False
+  UPDATE_2ND: True
+  FLOPS_MINIMUM: 0
+  FLOPS_MAXIMUM: 2000
+  PICK_METHOD: 'top1'
+  META_STA_EPOCH: 5
+  HOW_TO_PROB: 'even'
+  PRE_PROB: (0.05,0.2,0.05,0.5,0.05,0.15)
