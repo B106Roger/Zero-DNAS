@@ -298,6 +298,9 @@ def main():
     dataloader_weight, dataset_weight = create_dataloader(train_weight_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
                                             cache=args.cache_images, rect=args.rect,
                                             world_size=args.world_size)
+    # dataloader_weight, dataset_weight = create_dataloader(train_weight_path, imgsz, 2, gs, args, hyp=hyp, augment=True,
+    #                                         cache=args.cache_images, rect=args.rect,
+    #                                         world_size=args.world_size)
     # dataloader_thetas, dataset_thetas = create_dataloader(train_thetas_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
     #                                         cache=args.cache_images, rect=args.rect,
     #                                         world_size=args.world_size)
@@ -349,7 +352,7 @@ def main():
         write_thetas(output_dir, model.module.thetas_main if is_parallel(model) else model.thetas_main, -1)
         torch.save(model.state_dict(), os.path.join(output_dir, f'model_0.pt'))
         best_archs, historical_best = train_epoch_zero_cost_EA(args.zc, model, dataloader_weight, optimizer, cfg, device=device, task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
-                                   cycles=100, est=model_est, logger=logger)
+                                   cycles=1000, est=model_est, logger=logger)
         # Export Model Config
         for topk, arch_info in enumerate(best_archs):
             filename = os.path.join(model_dir, f'{args.zc}-Top{topk+1}_f{TASK_FLOPS}.yaml')

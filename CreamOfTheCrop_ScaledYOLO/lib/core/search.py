@@ -19,12 +19,13 @@ from lib.utils.util import *
 from lib.utils.general import compute_loss, test, plot_images, is_parallel, build_foreground_mask, compute_sensitive_loss
 from lib.utils.kd_utils import compute_loss_KD
 from lib.utils.synflow import sum_arr_tensor
-from lib.zero_proxy import snip, synflow
+from lib.zero_proxy import snip, synflow, grasp
 
 
 PROXY_DICT = {
     'snip'  :  snip.calculate_snip,
-    'synflow': synflow.calculate_synflow
+    'synflow': synflow.calculate_synflow,
+    'grasp': grasp.calculate_grasp
 }
 
 def sample_arch(search_space):
@@ -200,6 +201,7 @@ def _EA_crossover(parents, num, info_funcs, constraints=None):
 
 def _EA_sample(sample_function, num, info_funcs, constraints=None):
     """
+    Sample #num candidate.
     search_space : dict.
     num : int.
     info_funcs : list. each element is a dict
@@ -210,18 +212,20 @@ def _EA_sample(sample_function, num, info_funcs, constraints=None):
     while num:
         arch_info = {'arch': sample_function(), 'arch_type': 'continuous'}
         get_model_info(arch_info, info_funcs)
-        
+        # print(arch_info)
         if constraints is not None:
             if not fullfill_constraints(arch_info, constraints):
+                # print(f"{num}, {patience}")
                 patience+=1
                 if patience > 10: print(f'EA Sampling : {num:3d}/{patience:3d} {arch_info["flops"]:5.2f}\r', end='')
                 continue
+        # print(f"num = {num}")
         
         arches.append(arch_info)
         num-=1
         patience = 0
         
-    print()
+    # print("EA sample")
     return arches
 
 
@@ -346,7 +350,7 @@ def train_epoch_zero_cost_EA(proxy_name, model, dataloader, optimizer, cfg, devi
         if iter_idx == 10: break
 
     ##############################################
-    # Zero Cost Name (snip, synflow)
+    # Zero Cost Name (snip, synflow, grasp)
     ##############################################
     # proxy_name = 'synflow'
     info_funcs = [
@@ -409,7 +413,7 @@ def train_epoch_zero_cost_EA(proxy_name, model, dataloader, optimizer, cfg, devi
     RANDOM_COUNT     = 2
     DISCARD_COUNT    = MUTATION_COUNT + CROSSOVER_COUNT + RANDOM_COUNT
     TOPK             = 5
-    cycles           = 1
+    cycles           = 1000
     
     sample_func = lambda : naive_model.random_sampling()
     pools = _EA_sample(sample_func, POPULATION_COUNT, info_funcs, constraints)
