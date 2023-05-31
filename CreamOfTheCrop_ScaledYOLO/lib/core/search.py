@@ -19,12 +19,13 @@ from lib.utils.util import *
 from lib.utils.general import compute_loss, test, plot_images, is_parallel, build_foreground_mask, compute_sensitive_loss
 from lib.utils.kd_utils import compute_loss_KD
 from lib.utils.synflow import sum_arr_tensor
-from lib.zero_proxy import snip, synflow
+from lib.zero_proxy import snip, synflow, naswot
 
 
 PROXY_DICT = {
     'snip'  :  snip.calculate_snip,
-    'synflow': synflow.calculate_synflow
+    'synflow': synflow.calculate_synflow,
+    'naswot' : naswot.calculate_wot,
 }
 
 def sample_arch(search_space):
@@ -214,14 +215,14 @@ def _EA_sample(sample_function, num, info_funcs, constraints=None):
         if constraints is not None:
             if not fullfill_constraints(arch_info, constraints):
                 patience+=1
-                if patience > 10: print(f'EA Sampling : {num:3d}/{patience:3d} {arch_info["flops"]:5.2f}\r', end='')
+                # if patience > 10: print(f'EA Sampling : {num:3d}/{patience:3d} {arch_info["flops"]:5.2f}\r', end='')
                 continue
         
         arches.append(arch_info)
         num-=1
         patience = 0
         
-    print()
+    # print()
     return arches
 
 
@@ -343,8 +344,9 @@ def train_epoch_zero_cost_EA(proxy_name, model, dataloader, optimizer, cfg, devi
         # imgs = (batch=2, 3, height, width)
         imgs     = uimgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
         targets  = targets.to(device)
-        if iter_idx == 10: break
+        if iter_idx == 2: break
 
+    
     ##############################################
     # Zero Cost Name (snip, synflow)
     ##############################################
@@ -409,7 +411,7 @@ def train_epoch_zero_cost_EA(proxy_name, model, dataloader, optimizer, cfg, devi
     RANDOM_COUNT     = 2
     DISCARD_COUNT    = MUTATION_COUNT + CROSSOVER_COUNT + RANDOM_COUNT
     TOPK             = 5
-    cycles           = 1
+    cycles           = 1000
     
     sample_func = lambda : naive_model.random_sampling()
     pools = _EA_sample(sample_func, POPULATION_COUNT, info_funcs, constraints)
@@ -627,8 +629,8 @@ def train_epoch_sensitive(model, dataloader, optimizer, cfg, device, task_flops,
         optimizer.zero_grad()
         train_loss.backward()
         optimizer.step()
-        if ema is not None:
-            ema.update(model)
+        # if ema is not None:
+        #     ema.update(model)
         
         # Basic Info
         for j, x in enumerate(optimizer.param_groups):

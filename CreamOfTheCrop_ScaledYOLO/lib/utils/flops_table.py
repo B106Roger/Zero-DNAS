@@ -163,7 +163,8 @@ class FlopsEst(object):
                             flops = macs * 2
                         else:
                             raise ValueError(f"Invalid algorithm type {algorithm_type}")
-                        
+                        # print(f'[Up] Original FLOPS {flops} MFLOPS => Approx FLOPS={0}')
+                        # flops = 0.0
                         print(f'[Up] flops {spatial_dimension}', flops / 1e6, 'M', '-'*40)
                     else:
                         in_chs  = block.block_arguments['in_chs']

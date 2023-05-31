@@ -23,7 +23,7 @@ from timm.models.layers import SelectAdaptivePool2d
 from timm.models.layers.activations import hard_sigmoid
 from lib.utils.kd_utils import FeatureAdaptation
 from lib.utils.synflow import synflow, sum_arr, sum_arr_tensor
-from lib.utils.general import check_anchor_order
+from lib.utils.general import check_anchor_order, random_testing
 import math
 import yaml
 import random
@@ -56,6 +56,7 @@ class SuperNet(nn.Module):
             norm_layer=nn.BatchNorm2d,
             logger=None,
             norm_kwargs=None,
+            device='cpu',
             # global_pool='avg',
             # resunit=False,
             # dil_conv=False,
@@ -91,7 +92,7 @@ class SuperNet(nn.Module):
 
         self.blocks, self.save = parse_model(model_args, ch=[in_chans])  # model, savelist, ch_out
         
-        self.thetas_main = self.init_arch_parameter()
+        self.thetas_main = self.init_arch_parameter(device)
         print(self.thetas_main)
         
         # Build strides, anchors
@@ -152,9 +153,8 @@ class SuperNet(nn.Module):
         # Pass data through stem
         # print('Initial shape:', x.shape)
         SHOW_FEATURE_STATS = False
-        keys = sorted(self.search_space.keys())
         if distributions is None:
-            distributions = self.softmax_sampling()
+            distributions = self.softmax_sampling(temperature=self.temperature, detach=True)
         
         stage_idx = 0
         y, dt = [], []  # outputs
@@ -179,15 +179,33 @@ class SuperNet(nn.Module):
             if 'Search' in m.__class__.__name__:
                 stage_args = distributions[stage_idx]
                 x = m(x, stage_args)
+                stage_idx+=1
                 if SHOW_FEATURE_STATS:
-                    a,b = x.detach().cpu().min().numpy(), x.detach().cpu().max().numpy()
-                    print(f'{idx:02d} {m.__class__.__name__:30s} min {a:10.8e} max {b:10.8e}')
+                    tmp_feat = x.detach().cpu()
+                    a,b,c = tmp_feat.min().numpy(), tmp_feat.max().numpy(), tmp_feat.mean().numpy()
+                    d= tmp_feat.data[0,4,4,4].numpy()
+                    print(f'{idx:02d} {m.__class__.__name__:30s} min {a:10.8e} max {b:10.8e} mean {c:10.8e} first ele: {d:10.8e}')
             else:
                 x = m(x)  # run
                 if SHOW_FEATURE_STATS:
                     if 'Detect' not in m.__class__.__name__:
-                        a,b = x.detach().cpu().min().numpy(), x.detach().cpu().max().numpy()
-                        print(f'{idx:02d} {m.__class__.__name__:30s} min {a:10.8e} max {b:10.8e}')            
+                        tmp_feat = x.detach().cpu()
+                        a,b,c = tmp_feat.min().numpy(), tmp_feat.max().numpy(), tmp_feat.mean().numpy()
+                        d= tmp_feat.data[0,4,4,4].numpy()
+                        print(f'{idx:02d} {m.__class__.__name__:30s} min {a:10.8e} max {b:10.8e} mean {c:10.8e} first ele: {d:10.8e}')          
+                    else:
+                        if len(x) == 2: res = x[1]
+                        else: res=x
+                        
+                        for feat_idx, feat in enumerate(res):
+                            tmp_feat = feat.detach().cpu()
+                            a,b,c = tmp_feat.min().numpy(), tmp_feat.max().numpy(), tmp_feat.mean().numpy()
+                            if len(feat.shape) == 5:
+                                d= tmp_feat.sum()
+                            else:
+                                d= tmp_feat.sum()
+                            print(f'{stage_idx+2:02d} {m.__class__.__name__:30s}[{feat_idx}] min {a:10.8e} max {b:10.8e} mean {c:10.8e} first ele: {d:10.8e}')                  
+                            
             y.append(x if m.i in self.save else None)  # save output
 
         if profile:
@@ -278,11 +296,11 @@ class SuperNet(nn.Module):
     ########################################################################
     # Sampling Method
     ########################################################################
-    def init_arch_parameter(self):
+    def init_arch_parameter(self, device):
         arch = []
         for block_id, block in enumerate(self.blocks):
             if 'Search' in block.__class__.__name__:
-                arch.append(block.init_arch_parameter())
+                arch.append(block.init_arch_parameter(device))
         return arch
 
     def get_optimizer_parameter(self):
@@ -308,7 +326,7 @@ class SuperNet(nn.Module):
             
         return result
 
-    def random_sampling(self):
+    def random_sampling(self, device='cpu'):
         res = []
         for arch in self.thetas_main:
             block_arch={}
@@ -316,7 +334,7 @@ class SuperNet(nn.Module):
                 idx = random.randint(0, len(sample['arch']) - 1)
                 choice_prob = torch.zeros_like(arch['operators_choice'])
                 choice_prob[idx] = 1.0
-                block_arch['operators_choice'] = choice_prob
+                block_arch['operators_choice'] = choice_prob.to(device)
                 
                 block_arch['operators'] = []
                 for choice_arch in arch['operators']:
@@ -328,7 +346,7 @@ class SuperNet(nn.Module):
                             idx = np.random.randint(0, len(choice_arch[key]))
                             arch_prob = torch.zeros_like(choice_arch[key])
                             arch_prob[idx] = 1.0
-                            block_choice_arch[key] = arch_prob
+                            block_choice_arch[key] = arch_prob.to(device)
                     block_arch['operators'].append(block_choice_arch)
                         
             elif 'Search' in arch['block_name']:
@@ -339,12 +357,12 @@ class SuperNet(nn.Module):
                         idx = np.random.randint(0, len(arch[key]))
                         arch_prob = torch.zeros_like(arch[key])
                         arch_prob[idx] = 1.0
-                        block_arch[key] = arch_prob
+                        block_arch[key] = arch_prob.to(device)
             
             res.append(block_arch)
         return res
     
-    def gumbel_sampling(self, temperature):
+    def gumbel_sampling(self, temperature=None, device='cpu'):
         """
         this.tehtas_main = {
             {
@@ -377,12 +395,16 @@ class SuperNet(nn.Module):
             }
         }
         """
+        if temperature is None:
+            temperature = self.temperature
+        DEBUG = False
         res = []
-        for arch in self.thetas_main:
+        for stage_idx, arch in enumerate(self.thetas_main):
             block_arch={}
             if 'Composite' in arch['block_name']:
+                # raise ValueError(f'{stage_idx} is composite')
                 choice_prob = arch['operators_choice'].clone()
-                block_arch['operators_choice'] = torch.nn.functional.gumbel_softmax(choice_prob, temperature)
+                block_arch['operators_choice'] = torch.nn.functional.gumbel_softmax(choice_prob.to(device), temperature)
                 
                 block_arch['operators'] = []
                 for choice_arch in arch['operators']:
@@ -392,32 +414,43 @@ class SuperNet(nn.Module):
                             block_choice_arch[key] = value
                         else:
                             arch_prob = choice_arch[key].clone()
-                            block_choice_arch[key] = torch.nn.functional.gumbel_softmax(arch_prob, temperature)
+                            block_choice_arch[key] = torch.nn.functional.gumbel_softmax(arch_prob.to(device), temperature)
                     block_arch['operators'].append(block_choice_arch)
                         
             elif 'Search' in arch['block_name']:
+                search_idx = 0
                 for key, value in arch.items():
                     if key == 'block_name': 
                         block_arch[key] = value
                     else:
                         arch_prob = arch[key].clone()
-                        block_arch[key] = torch.nn.functional.gumbel_softmax(arch_prob, temperature)
-            
+                        if DEBUG: random_testing(f'before {stage_idx} {search_idx} tmp: {temperature}')
+                        val = torch.nn.functional.gumbel_softmax(arch_prob.to(device), temperature, dim=-1)
+                        if DEBUG: random_testing(f'after  {stage_idx} {search_idx} tmp: {temperature}')
+                        block_arch[key] = val
+                        search_idx += 1
+            else:
+                raise ValueError(f"Invalid Block Name {arch['block_name']}")
             res.append(block_arch)
         return res
     
-    def softmax_sampling(self, temperature=1.):
+    def softmax_sampling(self, temperature=None, detach=False, device='cpu'):
         """
         this.tehtas_main = {
             
         }
         """
+        if temperature is None:
+            temperature = self.temperature
+            print(f'temperature is none, so using default temp {temperature}')
+            
         res = []
         for arch in self.thetas_main:
             block_arch={}
             if 'Composite' in arch['block_name']:
                 choice_prob = arch['operators_choice'].clone()
-                block_arch['operators_choice'] = torch.nn.functional.softmax(choice_prob / temperature)
+                block_arch['operators_choice'] = torch.nn.functional.softmax(choice_prob.to(device) / temperature, dim=-1)
+                if detach: block_arch['operators_choice'] = block_arch['operators_choice'].detach()
                 
                 block_arch['operators'] = []
                 for choice_arch in arch['operators']:
@@ -427,7 +460,8 @@ class SuperNet(nn.Module):
                             block_choice_arch[key] = value
                         else:
                             arch_prob = choice_arch[key].clone()
-                            block_choice_arch[key] = torch.nn.functional.softmax(arch_prob / temperature)
+                            block_choice_arch[key] = torch.nn.functional.softmax(arch_prob.to(device) / temperature, dim=-1)
+                            if detach: block_choice_arch[key] = block_choice_arch[key].detach()
                     block_arch['operators'].append(block_choice_arch)
                         
             elif 'Search' in arch['block_name']:
@@ -436,8 +470,10 @@ class SuperNet(nn.Module):
                         block_arch[key] = value
                     else:
                         arch_prob = arch[key].clone()
-                        block_arch[key] = torch.nn.functional.softmax(arch_prob / temperature)
-            
+                        block_arch[key] = torch.nn.functional.softmax(arch_prob.to(device) / temperature, dim=-1)
+                        if detach: block_arch[key] = block_arch[key].detach()
+            else:
+                raise ValueError(f"Invalid Block Name {arch['block_name']}")
             res.append(block_arch)
         return res
     
@@ -470,7 +506,8 @@ class SuperNet(nn.Module):
                         arch_prob = torch.zeros_like(arch[key])
                         arch_prob[-1] = 1.0
                         block_arch[key] = arch_prob
-            
+            else:
+                raise ValueError(f"Invalid Block Name {arch['block_name']}")
             res.append(block_arch)
         return res
     
@@ -504,11 +541,55 @@ class SuperNet(nn.Module):
                         arch_prob[0] = 1.0
                         block_arch[key] = arch_prob
             
+            else:
+                raise ValueError(f"Invalid Block Name {arch['block_name']}")
+            res.append(block_arch)
+        return res
+    
+    def discretize_sampling(self, arches=None):
+        if arches is None:
+            arches = self.thetas_main
+            
+        res = []
+        for arch in arches:
+            block_arch={}
+            if 'Composite' in arch['block_name']:
+                # choice_prob = torch.zeros_like(arch['operators_choice'])
+                # choice_prob[0] = 1.0
+                # block_arch['operators_choice'] = choice_prob
+                
+                # block_arch['operators'] = []
+                # for choice_arch in arch['operators']:
+                #     block_choice_arch = {}
+                #     for key, value in choice_arch.items():
+                #         if key == 'block_name': 
+                #             block_choice_arch[key] = value
+                #         else:
+                #             arch_prob = torch.zeros_like(choice_arch[key])
+                #             arch_prob[0] = 1.0
+                #             block_choice_arch[key] = arch_prob
+                #     block_arch['operators'].append(block_choice_arch)
+                pass
+
+            elif 'Search' in arch['block_name']:
+                for key, value in arch.items():
+                    if key == 'block_name': 
+                        block_arch[key] = value
+                    else:
+                        max_idx   = arch[key].argmax().detach().cpu().numpy()
+                        arch_prob = torch.zeros_like(arch[key])
+                        arch_prob[max_idx] = 1.0
+                        block_arch[key] = arch_prob
+            else:
+                raise ValueError(f"Invalid Block Name {arch['block_name']}")
+            
             res.append(block_arch)
         return res
     
     #########################################################################
-    ######################## WeiJie Implementation ##########################
+    # Utility Function
+    # WeiJie Implementation
+    ######################################################################### 
     def calculate_flops_new(self, architecture_info, flops_dict):
         """
         Params
@@ -519,6 +600,7 @@ class SuperNet(nn.Module):
         -------
         overall_flops: torch.tensor(1,), M-FLOPS
         """
+        SHOW_FLOP_STAT = False
         keys = sorted(self.search_space.keys())
         architecture = architecture_info['arch']
         architecture_type = architecture_info['arch_type']
@@ -552,12 +634,14 @@ class SuperNet(nn.Module):
                         
                         query_key      = '-'.join(query_keys)
                         choice_flops = flops_dict[block_idx][query_key]
-                    
-                        layer_flops = layer_flops + choice_flops * prob
+                        if SHOW_FLOP_STAT: print(f'[FLOPS opt={query_keys}] flops={choice_flops} prob={prob} mut={choice_flops * prob}')
+                        layer_flops += choice_flops * prob
+
                     current_theta += 1
                 else:
-                    layer_flops = layer_flops + flops_dict[block_idx]['0']
-                    
+                    layer_flops = flops_dict[block_idx]['0']
+                
+                if SHOW_FLOP_STAT: print(f'[FLOPS {block_idx}]={layer_flops}')
                 overall_flops += layer_flops
         #         print(f'{block_idx:2s} {block.__class__.__name__:25s} {layer_flops:8.2f}')
         # print('Result ', overall_flops)
@@ -648,7 +732,65 @@ class SuperNet(nn.Module):
             block_id += 1
         return overall_layers
 
+    #########################################################################
+    # ZeroDNAS Function
+    #########################################################################
+    def generate_proxy_map(self, x, distributions, proxy_func):
+        """
+        x: input image. torch.float32(b, c, h, w)
+        distributions: architecture distributions parameter. torch.float32()
+        """
+        # Pass data through stem
+        # print('Initial shape:', x.shape)
+        SHOW_FEATURE_STATS = False
+        keys = sorted(self.search_space.keys())
+        if distributions is None:
+            distributions = self.softmax_sampling()
+        
+        stage_idx = 0
+        y, dt = [], []  # outputs
+        profile = False
+        for idx, m in enumerate(self.blocks):
+            if m.f != -1:  # if not from previous layer
+                x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
 
+            if profile:
+                try:
+                    import thop
+                    o = thop.profile(m, inputs=(x,), verbose=False)[0] / 1E9 * 2  # FLOPS
+                except:
+                    o = 0
+                t = time_synchronized()
+                for _ in range(10):
+                    _ = m(x)
+                dt.append((time_synchronized() - t) * 100)
+                print('%10.1f%10.0f%10.1fms %-40s' % (o, m.np, dt[-1], m.type))
+
+
+            if 'Search' in m.__class__.__name__:
+                stage_args = distributions[stage_idx]
+                x = m(x, stage_args)
+                if SHOW_FEATURE_STATS:
+                    a,b = x.detach().cpu().min().numpy(), x.detach().cpu().max().numpy()
+                    print(f'{idx:02d} {m.__class__.__name__:30s} min {a:10.8e} max {b:10.8e}')
+                stage_idx+=1
+            else:
+                x = m(x)  # run
+                if SHOW_FEATURE_STATS:
+                    if 'Detect' not in m.__class__.__name__:
+                        a,b = x.detach().cpu().min().numpy(), x.detach().cpu().max().numpy()
+                        print(f'{idx:02d} {m.__class__.__name__:30s} min {a:10.8e} max {b:10.8e}')            
+            y.append(x if m.i in self.save else None)  # save output
+
+        if profile:
+            print('%.1fms total' % sum(dt))
+
+        chosen_subnet = [None]
+        return x, y, chosen_subnet
+    
+    def update_proxy_map(self, architecture_info):
+        pass
+    
 class Classifier(nn.Module):
     def __init__(self, num_classes=1000):
         super(Classifier, self).__init__()

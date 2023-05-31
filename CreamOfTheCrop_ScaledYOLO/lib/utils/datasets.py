@@ -61,6 +61,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
 
     batch_size = min(batch_size, len(dataset))
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, 8])  # number of workers
+    print(f'[Info] Number of Workers {nw}')
     train_sampler = torch.utils.data.distributed.DistributedSampler(dataset) if local_rank != -1 else None
     dataloader = torch.utils.data.DataLoader(dataset,
                                              batch_size=batch_size,
@@ -411,7 +412,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                         b = x[1:] * [w, h, w, h]  # box
                         b[2:] = b[2:].max()  # rectangle to square
                         b[2:] = b[2:] * 1.3 + 30  # pad
-                        b = xywh2xyxy(b.reshape(-1, 4)).ravel().astype(np.int)
+                        b = xywh2xyxy(b.reshape(-1, 4)).ravel().astype(np.int32)
 
                         b[[0, 2]] = np.clip(b[[0, 2]], 0, w)  # clip boxes outside of image
                         b[[1, 3]] = np.clip(b[[1, 3]], 0, h)

@@ -2,7 +2,7 @@ import random
 import os
 import numpy as np
 
-sep_path = '../data/VOC2007/trainval.txt'
+sep_path = '../data/coco/train2017.txt'
 f=open(sep_path, 'r')
 lines = f.readlines()
 np.random.shuffle(lines)

@@ -10,6 +10,7 @@ import torchvision
 import torch.nn.functional as F
 import itertools
 import random
+from datetime import datetime
 from tqdm import tqdm
 from torch.cuda import amp
 from scipy.special import softmax
@@ -18,6 +19,7 @@ from lib.utils.general import compute_loss, test, plot_images, is_parallel, buil
 from lib.utils.kd_utils import compute_loss_KD
 from lib.utils.synflow import sum_arr_tensor
 from lib.zero_proxy import snip
+from lib.utils.general import random_testing
 
 
 def get_device_info():
@@ -323,9 +325,62 @@ def training_step(task_flops, task_params, device, model, random_cand, est, wot_
 ##############################
 # Train DNAS
 ##############################
+def train_step_dnas_V2(model, input, targets, is_gumbel, est, task_flops, task_params, device):
+    alpha = 0.1        # for flops_loss
+    beta = 0.01         # for params_loss
+    gamma = 0.01        # for zero cost loss
+    omega = 0.01        # for depth loss
+    eta = 0.01          # for regularization loss, default 0.01
+    is_ddp = is_parallel(model)
+    temperature = model.module.temperature if is_ddp else model.temperature
+
+    if is_gumbel:
+        gumbel_prob = model.module.gumbel_sampling(temperature) if is_ddp else model.gumbel_sampling(temperature)
+    else:
+        gumbel_prob = model.module.softmax_sampling(temperature) if is_ddp else model.softmax_sampling(temperature)
+        
+    imgs = input.to(device, non_blocking=True).float() / 255.0
+    pred = model.module(imgs, gumbel_prob) if is_ddp else model(imgs, gumbel_prob)
+    
+    det_loss, loss_items = compute_loss(pred, targets.to(device), model)  # scaled by batch_size
+    det_loss = det_loss[0]
+    
+    architecture_info = {
+        'arch_type': 'continuous',
+        'arch': gumbel_prob
+    }
+    flops = model.module.calculate_flops_new(architecture_info, est.flops_dict) if is_ddp else model.calculate_flops_new(architecture_info, est.flops_dict)
+    # params = model.module.calculate_params_new(architecture_info, est.params_dict)
+    # layers = model.module.calculate_layers_new(architecture_info)
+    
+    output_flops = flops.mean() / 1e3
+    # output_params = params.mean() 
+    # output_layers = layers.mean() 
+    
+    squared_error_flops = (output_flops - task_flops) ** 2
+    # squared_error_params = (output_params - task_params) ** 2
+    
+    flops_loss = squared_error_flops * alpha
+    # params_loss = squared_error_params * beta
+    # layers_loss = output_layers
+    train_loss = det_loss + flops_loss
+
+    hardware_losses = {
+        'squared_error_flops': squared_error_flops
+    }
+    train_info = {
+        'output_flops' : output_flops,
+        'n_targets' : targets.shape[0],
+        'n_imgs'    : imgs.shape[-1],
+        'architecture' : gumbel_prob
+    }
+
+    return train_loss, loss_items, hardware_losses, train_info
+
+
 def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task_params, 
-                     est=None, logger=None, local_rank=0, world_size=0, is_gumbel=False,
-                     prefix='', epoch=None, total_epoch=None, logdir='./', ema=None, warmup=True):
+                     est=None, logger=None, local_rank=0, world_size=0, is_gumbel=False, use_amp=False,
+                     prefix='', epoch=None, total_epoch=None, logdir='./', ema=None, warmup=True, description=""):
     batch_time_m = AverageMeter()
     data_time_m = AverageMeter()
     training_losses_m = AverageMeter()
@@ -357,16 +412,20 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
         pbar = tqdm(pbar, total=iterations, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
     
     
-    t_data = time.time()
-    # for iteration, (input, target) in enumerate(loader):
+    # t_data = time.time()
+    DBG_ITER=10
+    DEBUG = False
     for iter_idx, (imgs, targets, paths, _) in pbar:
-        t_data = time.time() - t_data 
+
+        # t_data = time.time() - t_data 
         ##################################################################
         ### 1st. Train SuperNet Parameter
         ##################################################################
         # imgs = (batch=2, 3, height, width)
         imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
-
+        if iter_idx <=DBG_ITER and DEBUG:
+            random_testing(f'train iter {iter_idx}')
+            print(imgs.sum(), imgs.mean(), imgs.min(), imgs.max())
         ni = iter_idx + iterations * (epoch- 1)
         if ni <= nw and warmup:
             import math
@@ -384,56 +443,108 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
                 if 'momentum' in x:
                     w_momentum = np.interp(ni, xi, [0.9, cfg.momentum])
                     x['momentum'] = w_momentum
-            # print(f'w_lr: {w_lr}  w_momentum: {w_momentum}')
-        
-        # arch_theta = torch.cat([theta().reshape(1, -1) for theta in (model.module.thetas if is_ddp else model.thetas )], dim=0)
-        # arch_theta = torch.cat([[theta() for theta in theta_module] for theta_module in (model.module.thetas if is_ddp else model.thetas )], dim=0)
-        
-        
-        if True:
-            # gumbel_prob = nn.functional.gumbel_softmax(arch_theta, temperature, dim=-1)
-            gumbel_prob = model.module.gumbel_sampling(temperature) if is_ddp else model.gumbel_sampling(temperature)
-        else:
-            # gumbel_prob = nn.functional.softmax(arch_theta, dim=-1)
-            gumbel_prob = model.module.softmax_sampling(temperature) if is_ddp else model.softmax_sampling(temperature)
-        
+
         t_infer=time.time()
-        pred = model.module(imgs, gumbel_prob) if is_ddp else model(imgs, gumbel_prob)
-        
-        # det_loss, loss_items = compute_loss(pred[0][1], targets.to(device), model)  # scaled by batch_size
-        det_loss, loss_items = compute_loss(pred, targets.to(device), model)  # scaled by batch_size
-        det_loss = det_loss[0]
-        
-        architecture_info = {
-            'arch_type': 'continuous',
-            'arch': gumbel_prob
-        }
-        flops = model.module.calculate_flops_new(architecture_info, est.flops_dict) if is_ddp else model.calculate_flops_new(architecture_info, est.flops_dict)
-        # params = model.module.calculate_params_new(architecture_info, est.params_dict)
-        # layers = model.module.calculate_layers_new(architecture_info)
-        
-        output_flops = flops.mean() / 1e3
-        # output_params = params.mean() 
-        # output_layers = layers.mean() 
-        
-        
-        squared_error_flops = (output_flops - task_flops) ** 2
-        # squared_error_params = (output_params - task_params) ** 2
-        # flops_loss = (output_flops - task_flops) ** 2
-        
-        flops_loss = squared_error_flops * alpha
-        # params_loss = squared_error_params * beta
-        # layers_loss = output_layers
+        if False and use_amp: 
+            scaler = amp.GradScaler(enabled=True)
+            with amp.autocast(enabled=True):
+                if is_gumbel:
+                    gumbel_prob = model.module.gumbel_sampling(temperature) if is_ddp else model.gumbel_sampling(temperature)
+                else:
+                    gumbel_prob = model.module.softmax_sampling(temperature) if is_ddp else model.softmax_sampling(temperature)
+                
+                pred = model.module(imgs, gumbel_prob) if is_ddp else model(imgs, gumbel_prob)
+                
+                # det_loss, loss_items = compute_loss(pred[0][1], targets.to(device), model)  # scaled by batch_size
+                det_loss, loss_items = compute_loss(pred, targets.to(device), model)  # scaled by batch_size
+                det_loss = det_loss[0]
+                
+                architecture_info = {
+                    'arch_type': 'continuous',
+                    'arch': gumbel_prob
+                }
+                flops = model.module.calculate_flops_new(architecture_info, est.flops_dict) if is_ddp else model.calculate_flops_new(architecture_info, est.flops_dict)
+                # params = model.module.calculate_params_new(architecture_info, est.params_dict)
+                # layers = model.module.calculate_layers_new(architecture_info)
+                
+                output_flops = flops.mean() / 1e3
+                # output_params = params.mean() 
+                # output_layers = layers.mean() 
+                
+                squared_error_flops = (output_flops - task_flops) ** 2
+                # squared_error_params = (output_params - task_params) ** 2
+                # flops_loss = (output_flops - task_flops) ** 2
+                
+                flops_loss = squared_error_flops * alpha
+                # params_loss = squared_error_params * beta
+                # layers_loss = output_layers
+
+                train_loss = det_loss + flops_loss
+            t_infer=time.time()-t_infer
             
-        train_loss = det_loss + flops_loss
-        t_infer=time.time()-t_infer
-        
-        time_grad= time.time()
-        optimizer.zero_grad()
-        train_loss.backward()
-        optimizer.step()
+            time_grad= time.time()
+            optimizer.zero_grad()
+            scaler.scale(train_loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            if is_gumbel:
+                gumbel_prob = model.module.gumbel_sampling(temperature=temperature, device=device) if is_ddp else model.gumbel_sampling(temperature=temperature, device=device)
+            else:
+                gumbel_prob = model.module.softmax_sampling(temperature=temperature) if is_ddp else model.softmax_sampling(temperature=temperature)
+            
+            # print('[Random] sample prob', gumbel_prob)
+            pred = model.module(imgs, gumbel_prob) if is_ddp else model(imgs, gumbel_prob)
+            if DEBUG: print('[Test] feature ', pred[0].mean())
+
+            # det_loss, loss_items = compute_loss(pred[0][1], targets.to(device), model)  # scaled by batch_size
+            # DEBUG = False
+            if True:
+                det_loss, loss_items = compute_loss(pred, targets.to(device), model)  # scaled by batch_size
+                det_loss = det_loss[0]
+                # logger.info(f'iter {iter_idx} {str(loss_items)}')
+                
+            else:
+                det_loss = 0
+                loss_items = torch.tensor([0.0, 0.0, 0.0, 0.0]).cuda()
+            architecture_info = {
+                'arch_type': 'continuous',
+                'arch': gumbel_prob
+            }
+            flops = model.module.calculate_flops_new(architecture_info, est.flops_dict) if is_ddp else model.calculate_flops_new(architecture_info, est.flops_dict)
+            # params = model.module.calculate_params_new(architecture_info, est.params_dict)
+            # layers = model.module.calculate_layers_new(architecture_info)
+            
+            output_flops = flops.mean() / 1e3
+            # output_params = params.mean() 
+            # output_layers = layers.mean() 
+            
+            squared_error_flops = (output_flops - task_flops) ** 2
+            # squared_error_params = (output_params - task_params) ** 2
+            # flops_loss = (output_flops - task_flops) ** 2
+            
+            flops_loss = squared_error_flops * alpha
+            # params_loss = squared_error_params * beta
+            # layers_loss = output_layers
+                
+            train_loss = det_loss + flops_loss
+            t_infer=time.time()-t_infer
+
+            # if iter_idx == 0 and description == "architecture":
+            #     logger.info(f'[Roger] Temp {temperature:5.2f} FLOPS : {output_flops:5.2f} Gumbel  {stringify_theta(gumbel_prob)}')
+            
+            time_grad= time.time()
+            optimizer.zero_grad()
+            train_loss.backward()
+            optimizer.step()
+            
         if ema is not None:
-            ema.update(model)
+            # description = "architecture", description = "weights"
+            if description == "weights":
+                ema.update(model, update_arch=False)
+            elif description == "architecture":
+                ema.update(model, update_arch=True)
+                
         
         # Basic Info
         for j, x in enumerate(optimizer.param_groups):
@@ -460,9 +571,13 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
                 #     tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
                     # tb_writer.add_graph(model, imgs)  # add model to tensorboard
     
+        if iter_idx <= DBG_ITER and DEBUG:
+            print('flops', flops)
+            print(f'task_flops={task_flops} output_flops={output_flops.detach().cpu().numpy()} squared_error_flops={squared_error_flops.detach().cpu().numpy()} flops_loss={flops_loss.detach().cpu().numpy()}')
+            random_testing(f'end of iter {iter_idx} output_flops: {output_flops.detach().cpu().numpy()} {flops_loss.detach().cpu().numpy()} {det_loss.detach().cpu().numpy()}')
+        if iter_idx == DBG_ITER and DEBUG: exit()
     
-    
-        t_data = time.time()
+        # t_data = time.time()
     torch.cuda.synchronize()
 
 
@@ -505,9 +620,7 @@ def train_epoch_dnas_V2(model, dataloader, theta_dataloader, optimizer, theta_op
     valid_gen = valid_generator()
     
     temperature = model.module.temperature if is_ddp else model.temperature
-    
-    arch_theta = torch.cat([theta().reshape(1, -1) for theta in (model.module.thetas if is_ddp else model.thetas )], dim=0)
-    arch_prob = nn.functional.softmax(arch_theta, dim=-1).cpu().detach().numpy()
+    arch_prob = model.module.softmax_sampling(temperature=temperature) if is_ddp else model.softmax_sampling(temperature=temperature)
     logger.info(f'Begin Architecture : {str(arch_prob)}')
 
     for iter_idx, (imgs, targets, paths, _) in pbar:
@@ -541,7 +654,7 @@ def train_epoch_dnas_V2(model, dataloader, theta_dataloader, optimizer, theta_op
             # Prepare Data
             input_valid, target_valid, _, _ = next(valid_gen)
             # Prepare Architecture Parameter
-            train_loss, loss_items, hardware_losses, train_info = train_step_dnas(model, input_valid, target_valid, False, est, task_flops, task_params, device)
+            train_loss, loss_items, hardware_losses, train_info = train_step_dnas_V2(model, input_valid, target_valid, False, est, task_flops, task_params, device)
             # squared_error_flops = hardware_losses['squared_error_flops']
             # output_flops        = train_info['output_flops']
             # n_targets           = train_info['n_targets']
@@ -552,25 +665,27 @@ def train_epoch_dnas_V2(model, dataloader, theta_dataloader, optimizer, theta_op
             theta_optimizer.zero_grad()
             train_loss.backward()
             theta_optimizer.step()
+            if ema is not None:
+                ema.update(model, update_arch=True)
         
         ##################################################################
         ### 3rd. Train SuperNet Parameter
         ##################################################################
-        train_loss, loss_items, hardware_losses, train_info = train_step_dnas(model, imgs, targets, is_gumbel, est, task_flops, task_params, device)
+        train_loss, loss_items, hardware_losses, train_info = train_step_dnas_V2(model, imgs, targets, True, est, task_flops, task_params, device)
         squared_error_flops = hardware_losses['squared_error_flops']
         output_flops        = train_info['output_flops']
         n_targets           = train_info['n_targets']
         n_imgs              = train_info['n_imgs']
         if (iter_idx + 1) % 100 == 0:
-            train_prob          = train_info['architecture'].cpu().detach().numpy()
-            logger.info(f'Train Temp : {temperature} Architecture : {str(train_prob)}')
+            train_prob          = stringify_theta(train_info['architecture'], normalize=True, temperature=temperature)
+            logger.info(f'Train Temp : {temperature} Architecture : {train_prob}')
         
         time_grad= time.time()
         optimizer.zero_grad()
         train_loss.backward()
         optimizer.step()
         if ema is not None:
-            ema.update(model)
+            ema.update(model, update_arch=False)
 
         # Basic Info
         for j, x in enumerate(optimizer.param_groups):
@@ -596,12 +711,215 @@ def train_epoch_dnas_V2(model, dataloader, theta_dataloader, optimizer, theta_op
                 f = str(Path(logdir) / ('train_batch%g.jpg' % ni))  # filename
                 result = plot_images(images=imgs, targets=targets, paths=paths, fname=f)
 
-    arch_theta = torch.cat([theta().reshape(1, -1) for theta in (model.module.thetas if is_ddp else model.thetas )], dim=0)
-    arch_prob = nn.functional.softmax(arch_theta, dim=-1).cpu().detach().numpy()
+    arch_prob = model.module.softmax_sampling(temperature=temperature) if is_ddp else model.softmax_sampling(temperature=temperature)
     logger.info(f'End Architecture : {str(arch_prob)}', )
 
     logger.info(s)        
     torch.cuda.synchronize()
+
+
+def train_epoch_flop(model, dataloader, optimizer, cfg, device, task_flops, task_params, 
+                     est=None, logger=None, local_rank=0, world_size=0, is_gumbel=False, use_amp=False,
+                     prefix='', epoch=None, total_epoch=None, logdir='./', ema=None, warmup=True, description=""):
+    batch_time_m = AverageMeter()
+    data_time_m = AverageMeter()
+    training_losses_m = AverageMeter()
+    flops_losses_m = AverageMeter()
+    det_losses_m = AverageMeter()
+    
+    cache_hits = 0
+    iterations = len(dataloader)
+
+    end = time.time()
+    last_idx = len(dataloader) - 1
+    
+    batch_size = cfg.DATASET.BATCH_SIZE
+    alpha = 0.1        # for flops_loss
+    beta = 0.01         # for params_loss
+    gamma = 0.01        # for zero cost loss
+    omega = 0.01        # for depth loss
+    eta = 0.01          # for regularization loss, default 0.01
+    nw = max(3 * batch_size, 1e3)
+    is_ddp = is_parallel(model)
+    
+    temperature = model.module.temperature if is_ddp else model.temperature
+    mloss = torch.zeros(4, device=device)  # mean losses
+    
+
+    pbar = enumerate(dataloader)
+    if local_rank in [-1, 0]:
+        print(('%10s' * 14) % ('Epoch', 'gpu_mem', 'GIoU', 'obj', 'cls', 'total', 'targets', 'img_size', 'lr', 'moment', 'decay', 'temp', 'GFLOPS', 'f_loss'))
+        pbar = tqdm(pbar, total=iterations, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
+    
+    
+    # t_data = time.time()
+    DBG_ITER=10
+    DEBUG = False
+    for iter_idx, (imgs, targets, paths, _) in pbar:
+
+        # t_data = time.time() - t_data 
+        ##################################################################
+        ### 1st. Train SuperNet Parameter
+        ##################################################################
+        # imgs = (batch=2, 3, height, width)
+        imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
+        if iter_idx <=DBG_ITER and DEBUG:
+            random_testing(f'train iter {iter_idx}')
+            print(imgs.sum(), imgs.mean(), imgs.min(), imgs.max())
+        ni = iter_idx + iterations * (epoch- 1)
+        if ni <= nw and warmup:
+            import math
+            lf = lambda x: (((1 + math.cos(x * math.pi / total_epoch)) / 2) ** 1.0) * 0.8 + 0.2
+            xi = [0, nw]  # x interp
+            # model.gr = np.interp(ni, xi, [0.0, 1.0])  # giou loss ratio (obj_loss = 1.0 or giou)
+            accumulate = max(1, np.interp(ni, xi, [1, 1]).round())
+            for j, x in enumerate(optimizer.param_groups):
+                # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
+                if 'initial_lr' not in x:
+                    continue
+                w_lr = np.interp(ni, xi, [0.1 if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
+                
+                x['lr'] = w_lr
+                if 'momentum' in x:
+                    w_momentum = np.interp(ni, xi, [0.9, cfg.momentum])
+                    x['momentum'] = w_momentum
+
+        t_infer=time.time()
+        if False and use_amp: 
+            scaler = amp.GradScaler(enabled=True)
+            with amp.autocast(enabled=True):
+                if is_gumbel:
+                    gumbel_prob = model.module.gumbel_sampling(temperature=temperature) if is_ddp else model.gumbel_sampling(temperature=temperature)
+                else:
+                    gumbel_prob = model.module.softmax_sampling(temperature=temperature) if is_ddp else model.softmax_sampling(temperature=temperature)
+                
+                pred = model.module(imgs, gumbel_prob) if is_ddp else model(imgs, gumbel_prob)
+                
+                # det_loss, loss_items = compute_loss(pred[0][1], targets.to(device), model)  # scaled by batch_size
+                det_loss, loss_items = compute_loss(pred, targets.to(device), model)  # scaled by batch_size
+                det_loss = det_loss[0]
+                
+                architecture_info = {
+                    'arch_type': 'continuous',
+                    'arch': gumbel_prob
+                }
+                flops = model.module.calculate_flops_new(architecture_info, est.flops_dict) if is_ddp else model.calculate_flops_new(architecture_info, est.flops_dict)
+                # params = model.module.calculate_params_new(architecture_info, est.params_dict)
+                # layers = model.module.calculate_layers_new(architecture_info)
+                
+                output_flops = flops.mean() / 1e3
+                # output_params = params.mean() 
+                # output_layers = layers.mean() 
+                
+                squared_error_flops = (output_flops - task_flops) ** 2
+                # squared_error_params = (output_params - task_params) ** 2
+                # flops_loss = (output_flops - task_flops) ** 2
+                
+                flops_loss = squared_error_flops * alpha
+                # params_loss = squared_error_params * beta
+                # layers_loss = output_layers
+
+                train_loss = det_loss + flops_loss
+            t_infer=time.time()-t_infer
+            
+            time_grad= time.time()
+            optimizer.zero_grad()
+            scaler.scale(train_loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            if is_gumbel:
+                gumbel_prob = model.module.gumbel_sampling(temperature, device=device) if is_ddp else model.gumbel_sampling(temperature, device=device)
+            else:
+                gumbel_prob = model.module.softmax_sampling(temperature, device=device) if is_ddp else model.softmax_sampling(temperature, device=device)
+            
+            # print('[Random] sample prob', gumbel_prob)
+            pred = model.module(imgs, gumbel_prob) if is_ddp else model(imgs, gumbel_prob)
+            if DEBUG: print('[Test] feature ', pred[0].mean())
+
+            # det_loss, loss_items = compute_loss(pred[0][1], targets.to(device), model)  # scaled by batch_size
+            # DEBUG = False
+            if False:
+                det_loss, loss_items = compute_loss(pred, targets.to(device), model)  # scaled by batch_size
+                det_loss = det_loss[0]
+                logger.info(f'iter {iter_idx} {str(loss_items)}')
+                
+            else:
+                det_loss = 0
+                loss_items = torch.tensor([0.0, 0.0, 0.0, 0.0]).cuda()
+            architecture_info = {
+                'arch_type': 'continuous',
+                'arch': gumbel_prob
+            }
+            flops = model.module.calculate_flops_new(architecture_info, est.flops_dict) if is_ddp else model.calculate_flops_new(architecture_info, est.flops_dict)
+            # params = model.module.calculate_params_new(architecture_info, est.params_dict)
+            # layers = model.module.calculate_layers_new(architecture_info)
+            
+            output_flops = flops.mean() / 1e3
+            # output_params = params.mean() 
+            # output_layers = layers.mean() 
+            
+            squared_error_flops = (output_flops - task_flops) ** 2
+            # squared_error_params = (output_params - task_params) ** 2
+            # flops_loss = (output_flops - task_flops) ** 2
+            
+            flops_loss = squared_error_flops * alpha
+            # params_loss = squared_error_params * beta
+            # layers_loss = output_layers
+                
+            train_loss = det_loss + flops_loss
+            t_infer=time.time()-t_infer
+
+            # if iter_idx == 0 and description == "architecture":
+            #     logger.info(f'[Roger] Temp {temperature:5.2f} FLOPS : {output_flops:5.2f} Gumbel  {stringify_theta(gumbel_prob)}')
+            
+            time_grad= time.time()
+            optimizer.zero_grad()
+            train_loss.backward()
+            optimizer.step()
+            
+        if ema is not None:
+            # description = "architecture", description = "weights"
+            if description == "weights":
+                ema.update(model, update_arch=False)
+            elif description == "architecture":
+                ema.update(model, update_arch=True)
+                
+        
+        # Basic Info
+        for j, x in enumerate(optimizer.param_groups):
+            if 'momentum' in x:
+                break
+        print_lr = x['lr'] if 'lr' in x else 0
+        print_m = x['momentum'] if 'momentum' in x else 0
+        print_wdecay = x['weight_decay'] if 'weight_decay' in x else 0
+        
+        # Print
+        if local_rank in [-1, 0]:
+            ni = iter_idx
+            mloss = (mloss * iter_idx + loss_items) / (iter_idx + 1)  # update mean losses
+            mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
+            s = ('%10s' * 2 + '%10.4g' * 12) % (
+                '%g/%g' % (epoch, total_epoch), mem, *mloss, targets.shape[0], imgs.shape[-1], print_lr, print_m, print_wdecay, temperature, output_flops, squared_error_flops.detach().cpu())
+            pbar.set_description(s)
+            
+            # Plot
+            if ni < 3:
+                f = str(Path(logdir) / ('train_batch%g.jpg' % ni))  # filename
+                result = plot_images(images=imgs, targets=targets, paths=paths, fname=f)
+                # if tb_writer and result is not None:
+                #     tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
+                    # tb_writer.add_graph(model, imgs)  # add model to tensorboard
+    
+        if iter_idx <= DBG_ITER and DEBUG:
+            print('flops', flops)
+            print(f'task_flops={task_flops} output_flops={output_flops.detach().cpu().numpy()} squared_error_flops={squared_error_flops.detach().cpu().numpy()} flops_loss={flops_loss.detach().cpu().numpy()}')
+            random_testing(f'end of iter {iter_idx} output_flops: {output_flops.detach().cpu().numpy()} {flops_loss.detach().cpu().numpy()} {det_loss.detach().cpu().numpy()}')
+        if iter_idx == DBG_ITER and DEBUG: exit()
+    
+        # t_data = time.time()
+    torch.cuda.synchronize()
+
 
 
 ##############################
@@ -743,8 +1061,6 @@ def train_epoch_sensitive(model, dataloader, optimizer, cfg, device, task_flops,
         optimizer.zero_grad()
         train_loss.backward()
         optimizer.step()
-        if ema is not None:
-            ema.update(model)
         
         # Basic Info
         for j, x in enumerate(optimizer.param_groups):

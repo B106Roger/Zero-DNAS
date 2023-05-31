@@ -17,6 +17,9 @@ import _init_paths
 
 # import timm packages
 from timm.utils import CheckpointSaver, update_summary
+# from timm.loss import LabelSmoothingCrossEntropy
+# from timm.data import Dataset, create_loader
+# from timm.models import resume_checkpoint
 
 # import apex as distributed package otherwise we use torch.nn.parallel.distributed as distributed package
 try:
@@ -29,15 +32,21 @@ except ImportError:
 
 # import models and training functions
 from lib.utils.flops_table import FlopsEst
-from lib.core.train import train_epoch, validate, train_epoch_dnas, train_epoch_dnas_V2
+from lib.core.train import *
 from lib.models.structures.supernet import gen_supernet
+from lib.models.PrioritizedBoard import PrioritizedBoard
+from lib.models.MetaMatchingNetwork import MetaMatchingNetwork
 from lib.config import DEFAULT_CROP_PCT, IMAGENET_DEFAULT_STD, IMAGENET_DEFAULT_MEAN
 from lib.utils.util import convert_lowercase, get_logger, \
     create_optimizer_supernet, create_supernet_scheduler, stringify_theta, write_thetas, export_thetas
 from lib.utils.datasets import create_dataloader
+from lib.utils.kd_utils import FeatureAdaptation
 from lib.models.blocks.yolo_blocks import Conv, ConvNP, BottleneckCSP, BottleneckCSP2, set_algorithm_type
 from lib.utils.general import check_img_size, labels_to_class_weights, is_parallel, compute_loss, test, ModelEMA, random_testing
 from lib.utils.torch_utils import select_device
+from lib.utils.attentive_sampling import collect_samples
+from scipy.special import softmax
+from lib.models.AttentiveNasSampler import ArchSampler
 from lib.config import cfg
 import argparse
 import random
@@ -53,13 +62,12 @@ def config_backup(config_bakup_dir, code_backup_dir, args):
     with open(os.path.join(config_bakup_dir, 'commandline.txt'), 'w') as f:
         f.writelines(' '.join(sys.argv))
         
-    shutil.copy('lib/core/train.py',                      os.path.join(code_backup_dir, 'core_train.py'))
-    shutil.copy(f'{__file__}',                            os.path.join(code_backup_dir, os.path.basename(__file__)))
-    shutil.copy('lib/models/structures/supernet.py',      os.path.join(code_backup_dir, 'supernet.py'))
-    shutil.copy('lib/models/blocks/yolo_blocks.py',       os.path.join(code_backup_dir, 'yolo_blocks.py'))
-    shutil.copy('lib/models/blocks/yolo_blocks_search.py',os.path.join(code_backup_dir, 'yolo_blocks_search.py'))
-    shutil.copy('lib/models/builders/build_supernet.py',  os.path.join(code_backup_dir, 'build_supernet.py'))
-    shutil.copy('lib/utils/general.py',                   os.path.join(code_backup_dir, 'general.py'))
+    shutil.copy('lib/core/train.py',                     os.path.join(code_backup_dir, 'core_train.py'))
+    shutil.copy(f'{__file__}',                           os.path.join(code_backup_dir, os.path.basename(__file__)))
+    shutil.copy('lib/models/structures/supernet.py',     os.path.join(code_backup_dir, 'supernet.py'))
+    shutil.copy('lib/models/blocks/yolo_blocks.py',      os.path.join(code_backup_dir, 'yolo_blocks.py'))
+    shutil.copy('lib/models/builders/build_supernet.py', os.path.join(code_backup_dir, 'build_supernet.py'))
+    shutil.copy('lib/utils/general.py',                  os.path.join(code_backup_dir, 'general.py'))
     
 
 def parse_config_args(exp_name):
@@ -73,7 +81,7 @@ def parse_config_args(exp_name):
     parser.add_argument('--model',type=str, default='config/model/Search-YOLOv4-CSP.yaml', help='model path')
     parser.add_argument('--exp_name', type=str, default='exp', help="name of experiments")
     parser.add_argument('--nas', default='', type=str, help='NAS-Search-Space and hardware constraint combination')
-    parser.add_argument('--pretrain_dir',  default='', type=str, help='pretrain model state dict')
+    # parser.add_argument('--zc',  default='', type=str, help='Zero Cost Metrics Type')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     ###################################################################################
     
@@ -138,13 +146,9 @@ def main():
     code_backup_dir  = os.path.join(output_dir, 'code')
     theta_dir        = 'thetas_weights' # thetas.pt
     model_dir        = os.path.join(output_dir, 'model')
-    model_w_dir      = os.path.join(output_dir, 'model_weights')
-    
     
     os.makedirs(model_dir, exist_ok=True)
     os.makedirs(theta_dir, exist_ok=True)
-    os.makedirs(model_w_dir, exist_ok=True)
-    
     
     config_backup(config_bakup_dir, code_backup_dir, args)
 
@@ -179,14 +183,30 @@ def main():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+    # set search space argument
+    set_algorithm_type('DNAS')
+    BottleneckCSP.set_search_space(cfg.search_space.BOTTLENECK_CSP)
+    BottleneckCSP2.set_search_space(cfg.search_space.BOTTLENECK_CSP2)
     # generate supernet
     print('SEARCH_SPACES', SEARCH_SPACES)
+    random_testing('before create supernet')
     model, sta_num, resolution = gen_supernet(
         model_args,
+        # choices=SEARCH_SPACES,
         num_classes=cfg.DATASET.NUM_CLASSES,
+        # drop_rate=cfg.NET.DROPOUT_RATE,
+        # global_pool=cfg.NET.GP,
+        # resunit=cfg.SUPERNET.RESUNIT,
+        # dil_conv=cfg.SUPERNET.DIL_CONV,
+        # slice=cfg.SUPERNET.SLICE,
         verbose=cfg.VERBOSE,
         logger=logger,
+        # device=device,
         init_temp=cfg.TEMPERATURE.INIT)
+    random_testing('after create supernet')
+    # print(model)
+    # initialize meta matching networks
+    MetaMN = MetaMatchingNetwork(cfg)
     
     # number of choice blocks in supernet
     # choice_num = model.choices # First bottlecsp
@@ -196,9 +216,20 @@ def main():
         logger.info('resolution: %d', (cfg.DATASET.IMAGE_SIZE))
         # logger.info('choice number: %d', (choice_num))
 
-
+    #initialize prioritized board
+    # prioritized_board = PrioritizedBoard(cfg, CHOICE_NUM=choice_num, sta_num=sta_num, acc_gap=0.06)
+    # print(model.blocks[1])
+    # prunable_module_type = (nn.BatchNorm2d, )
+    # prunable_modules = []
+    # CBL_idx = []
+    # for idx, module in enumerate(model.modules()):
+    #     if isinstance(module, ConvNP):
+    #         CBL_idx.append(idx)    
     # initialize flops look-up table
     model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE), search_space=SEARCH_SPACES)
+    # if args.collect_samples > 0:
+    #     collect_samples(args.collect_samples, model, prioritized_board, model_est)
+    #     exit()
 
     # optionally resume from a checkpoint
     # optimizer_state = None
@@ -251,11 +282,12 @@ def main():
     if args.local_rank == 0:
         logger.info('Scheduled epochs: %d', num_epochs)
 
-    # Hyper Parameter Config
     with open(args.hyp) as f:
         hyp = yaml.load(f, Loader=yaml.FullLoader)  # load hyps
 
-    # Dataset Config
+    
+
+    # Trainloader
     with open(args.data) as f:
         data_dict = yaml.load(f, Loader=yaml.FullLoader)  # model dict
 
@@ -267,13 +299,14 @@ def main():
     assert len(names) == nc, '%g names found for nc=%g dataset in %s' % (len(names), nc, args.data)  # check
     
     hyp['cls'] *= nc / 80.  # scale coco-tuned hyp['cls'] to current dataset
-
+    random_testing('before create dataloader')
     dataloader_weight, dataset_weight = create_dataloader(train_weight_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
                                             cache=args.cache_images, rect=args.rect,
                                             world_size=args.world_size)
     dataloader_thetas, dataset_thetas = create_dataloader(train_thetas_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
                                             cache=args.cache_images, rect=args.rect,
                                             world_size=args.world_size)
+    random_testing('after create dataloader')
     mlc = np.concatenate(dataset_weight.labels, 0)[:, 0].max()  # max label class
     nb = len(dataloader_weight)  # number of batches
     assert mlc < nc, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (mlc, nc, args.data, nc - 1)
@@ -286,7 +319,7 @@ def main():
     model.names = names
     print('[Info] cfg.TEMPERATURE.INIT', cfg.TEMPERATURE.INIT)
     print('[Info] cfg.TEMPERATURE.FINAL', cfg.TEMPERATURE.FINAL)
-
+    
     ema = ModelEMA(model) if args.local_rank in [-1, 0] else None
 
     # Testloader
@@ -295,112 +328,60 @@ def main():
         # local_rank is set to -1. Because only the first process is expected to do evaluation.
         # if ema is not None:
         #     ema.updates = start_epoch * nb // 1  # set EMA updates ***
+        print('[Roger] Passs')
+        pass
         testloader = create_dataloader(test_path, imgsz_test, 16, gs, args, hyp=hyp, augment=False,
                                        cache=args.cache_images, rect=True, local_rank=-1, world_size=args.world_size)[0]
+
+    # arch_sampler = ArchSampler('candidate_samples_8_6_4_2_025_05_075.txt', 1250, model_est, prioritized_board=prioritized_board)
+    # arch_sampler = None
+    # if args.collect_synflows > 0:
+    #     collect_synflows(args.collect_synflows, model, arch_sampler, device)
+    #     exit()
     
-    start_epoch = 1
-    MODEL_WEIGHT_NAME = os.path.join(args.pretrain_dir, f'model_{cfg.FREEZE_EPOCH}.pt') 
-    EMA_WEIGHT_NAME   = os.path.join(args.pretrain_dir, f'ema_pretrained_{cfg.FREEZE_EPOCH}.pt') 
-    OPTIMIZER_NAME    = os.path.join(args.pretrain_dir, f'optimizer_{cfg.FREEZE_EPOCH}.pt')
-    if args.pretrain_dir != '':
-        start_epoch = 41
-        
-        # Load Supernet MOdel
-        model.load_state_dict(torch.load(MODEL_WEIGHT_NAME), strict=False)
-        
-        # Load EMA Model
-        if os.path.exists(EMA_WEIGHT_NAME):
-            ema.ema.load_state_dict(torch.load(EMA_WEIGHT_NAME))
-        else:
-            ema = ModelEMA(model) if args.local_rank in [-1, 0] else None
-        ema.updates      = 40 * len(dataloader_weight)
-        ema.updates_arch = 40 * len(dataloader_thetas)
-        
-        # Load Model Weights Optimizer Parameter
-        if os.path.exists(OPTIMIZER_NAME):
-            optimizer.load_state_dict(torch.load(OPTIMIZER_NAME))
-        
-        # Restore Learning Rate
-        for i in range(1, start_epoch): lr_scheduler.step()
-        
-        # Calculate mAP of pretrain weights
-        _, _, map50, *other = test(
-            data=args.data, batch_size=16, imgsz=416, save_json=False,
-            model=ema.ema.module if hasattr(ema.ema, 'module') else ema.ema,
-            single_cls=False, dataloader=testloader, save_dir=output_dir, logger=logger
-        )
-        
+    train_loss_fn = compute_loss
+    validate_loss_fn = compute_loss
+    
+    synflow_cache = {}
+    # initialize training parameters
+    eval_metric = cfg.EVAL_METRICS
+    best_metric, best_epoch, saver, best_children_pool = None, None, None, []
+    if args.local_rank == 0:
+        decreasing = True if eval_metric == 'loss' else False
+        # saver = CheckpointSaver(
+        #     checkpoint_dir=output_dir,
+        #     decreasing=decreasing)
+
     # training scheme
+    # FREEZE_EPOCH=40
     method = 'ver1'
-    sample_temp = 1.0
-    
     try:
-        print('TASK_FLOPS', TASK_FLOPS)
+        print('task_flops', TASK_FLOPS)
         print('FREEZE_EPOCH', cfg.FREEZE_EPOCH)
         print('EPOCH', num_epochs)
         filename = os.path.join(model_dir, f'DNAS-current_f{TASK_FLOPS}.yaml')
         export_thetas(model.softmax_sampling(detach=True), model, model.model_args, filename)
 
-        for epoch in range(start_epoch, num_epochs+1):
+        
+        # write_thetas(output_dir, model.module.thetas_main if is_parallel(model) else model.thetas_main, -1)
+        # torch.save(model.state_dict(), os.path.join(output_dir, f'model_0.pt'))
+        random_testing('after training')
+        for epoch in range(1, num_epochs+1):
             model.train()
-            thetas_enable = False if epoch <= cfg.FREEZE_EPOCH else True
-            # if epoch <= cfg.FREEZE_EPOCH:
-            #     thetas_enable = False
-            #     model.temperature = sample_temp
-            # elif epoch == cfg.FREEZE_EPOCH+1:
-            #     thetas_enable = True
-            #     model.temperature = cfg.TEMPERATURE.INIT
-            # else:
-            #     thetas_enable = True
+            thetas_enable = True
             
-            ####################################################
-            # Update Model Method 2
-            # For epoch in epochs:
-            #     For iteration in iterations:
-            #         update model weights
-            #         update model architectures
-            ####################################################
-            if method == 'ver2':
-                train_epoch_dnas_V2(model, dataloader_weight, dataloader_thetas, optimizer, theta_optimizer, cfg, device=device, 
-                    task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
-                    est=model_est, local_rank=args.local_rank, world_size=args.world_size, 
-                    epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema
-                )
-            
-            ####################################################
-            # Update Model Method 1
-            # For epoch in epochs:
-            #     For iteration in iterations:
-            #         update model weights
-            #     For iteration in iteartions:       
-            #         update model architectures
-            ####################################################
-            if method == 'ver1':
-                # Train Architecture First
-                if thetas_enable:
-                    train_epoch_dnas(model, dataloader_thetas, theta_optimizer, cfg, device=device, 
-                        task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
-                        est=model_est, local_rank=args.local_rank, world_size=args.world_size, use_amp=USE_AMP,
-                        epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema, warmup=False, description="architecture"
-                    )
-                
-                # Train Network Parameter
-                train_epoch_dnas(model, dataloader_weight, optimizer, cfg, device=device, 
-                    task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
-                    est=model_est, local_rank=args.local_rank, world_size=args.world_size, use_amp=USE_AMP,
-                    epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=True, ema=ema, description="weights"
-                )
-                
 
-                if epoch == cfg.FREEZE_EPOCH :
-                    torch.save(model.state_dict(),     os.path.join(output_dir, 'model_weights', f'model_pretrained_{epoch}.pt'))
-                    torch.save(ema.ema.state_dict(),   os.path.join(output_dir, 'model_weights', f'ema_pretrained_{epoch}.pt'))
-                    torch.save(optimizer.state_dict(), os.path.join(output_dir, 'model_weights', f'optimizer_{epoch}.pt'))
-                    
+            train_epoch_flop(model, dataloader_thetas, theta_optimizer, cfg, device=device, 
+                task_flops=TASK_FLOPS, task_params=TASK_PARAMS, logger=logger, 
+                est=model_est, local_rank=args.local_rank, world_size=args.world_size, use_amp=USE_AMP,
+                epoch=epoch, total_epoch=num_epochs, logdir=output_dir, is_gumbel=False, ema=ema, warmup=False, description="architecture"
+            )
+                
             if thetas_enable:
                 # temp_decay = np.exp(-0.045) # 0.9560
                 # temp_decay = 0.2**(1/80)    # 0.9800
-                temp_decay = (cfg.TEMPERATURE.FINAL/cfg.TEMPERATURE.INIT)**(1/(num_epochs-cfg.FREEZE_EPOCH)) # 0.9560
+                temp_decay = (cfg.TEMPERATURE.FINAL/cfg.TEMPERATURE.INIT)**(1/(num_epochs)) # 0.9560
+                # temp_decay = np.exp(-0.045)
 
                 ##############################################################
                 # Reduce & Save Architecture Temperature
@@ -477,28 +458,13 @@ def main():
                     logger.info(f'Model Continous FLOPS : {flops:6.2f} Discrete Archtiecture : {continuous_str_arch}')        
             
             lr_scheduler.step()
-            _, _, map50, *other = test(
-                data=args.data,
-                batch_size=16,
-                imgsz=416,
-                save_json=False,
-                model=ema.ema.module if hasattr(ema.ema, 'module') else ema.ema,
-                single_cls=False,
-                dataloader=testloader,
-                save_dir=output_dir,
-                logger=logger
-            )
-            random_testing('end of testing')
-            print()
-        s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
-        logger.info(s)
+            random_testing('end of epoch')
+
         filename = os.path.join(model_dir, f'best_f{TASK_FLOPS}.yaml')
         export_thetas(model.softmax_sampling(detach=True), model, model.model_args, filename)
-
+        
     except KeyboardInterrupt:
         pass
-
-
 
 if __name__ == '__main__':
     main()

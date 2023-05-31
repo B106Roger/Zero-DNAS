@@ -113,6 +113,7 @@ task_dict = {
     'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, },
     'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, },
     
+    'DNAS-70':     { 'GFLOPS': 70.3,  'PARAMS': 70.4, },
     'DNAS-60':     { 'GFLOPS': 60,  'PARAMS': 34.84, },
     'DNAS-50':     { 'GFLOPS': 50,  'PARAMS': 34.84, },
     'DNAS-40':     { 'GFLOPS': 40,  'PARAMS': 34.84, },
@@ -183,18 +184,11 @@ def main():
 
     # set search space argument
     set_algorithm_type('DNAS')
-    BottleneckCSP.set_search_space(cfg.search_space.BOTTLENECK_CSP)
-    BottleneckCSP2.set_search_space(cfg.search_space.BOTTLENECK_CSP2)
     # generate supernet
     # print('SEARCH_SPACES', SEARCH_SPACES)
     model, sta_num, resolution = gen_supernet(
         model_args,
         num_classes=cfg.DATASET.NUM_CLASSES,
-        # drop_rate=cfg.NET.DROPOUT_RATE,
-        # global_pool=cfg.NET.GP,
-        # resunit=cfg.SUPERNET.RESUNIT,
-        # dil_conv=cfg.SUPERNET.DIL_CONV,
-        # slice=cfg.SUPERNET.SLICE,
         verbose=cfg.VERBOSE,
         logger=logger,
         init_temp=5.0)
@@ -204,27 +198,16 @@ def main():
     MetaMN = MetaMatchingNetwork(cfg)
     
     # number of choice blocks in supernet
-    choice_num = 123 # First bottlecsp
     if args.local_rank == 0:
         logger.info('Supernet created, param count: %.2f M', (
             sum([m.numel() for m in model.parameters()]) / 1e6))
         logger.info('resolution: %d', (cfg.DATASET.IMAGE_SIZE))
-        logger.info('choice number: %d', (choice_num))
+        # logger.info('choice number: %d', (choice_num))
 
-    #initialize prioritized board
-    prioritized_board = PrioritizedBoard(cfg, CHOICE_NUM=choice_num, sta_num=sta_num, acc_gap=0.06)
-    # print(model.blocks[1])
-    prunable_module_type = (nn.BatchNorm2d, )
-    prunable_modules = []
-    CBL_idx = []
-    for idx, module in enumerate(model.modules()):
-        if isinstance(module, ConvNP):
-            CBL_idx.append(idx)    
+
     # initialize flops look-up table
     model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE), search_space=SEARCH_SPACES)
-    if args.collect_samples > 0:
-        collect_samples(args.collect_samples, model, prioritized_board, model_est)
-        exit()
+
 
     # optionally resume from a checkpoint
     # optimizer_state = None
@@ -314,20 +297,6 @@ def main():
 
     ema = ModelEMA(model) if args.local_rank in [-1, 0] else None
 
-    # Testloader
-    # if args.local_rank in [-1, 0]:
-    #     # ema.updates = start_epoch * nb // accumulate  # set EMA updates ***
-    #     # local_rank is set to -1. Because only the first process is expected to do evaluation.
-    #     if ema is not None:
-    #         ema.updates = start_epoch * nb // 1  # set EMA updates ***
-    #     testloader = create_dataloader(test_path, imgsz_test, 16, gs, args, hyp=hyp, augment=False,
-    #                                    cache=args.cache_images, rect=True, local_rank=-1, world_size=args.world_size)[0]
-
-    # arch_sampler = ArchSampler('candidate_samples_8_6_4_2_025_05_075.txt', 1250, model_est, prioritized_board=prioritized_board)
-    arch_sampler = None
-    if args.collect_synflows > 0:
-        collect_synflows(args.collect_synflows, model, arch_sampler, device)
-        exit()
     
     train_loss_fn = compute_loss
     validate_loss_fn = compute_loss
@@ -338,18 +307,14 @@ def main():
     best_metric, best_epoch, saver, best_children_pool = None, None, None, []
     if args.local_rank == 0:
         decreasing = True if eval_metric == 'loss' else False
-        # saver = CheckpointSaver(
-        #     checkpoint_dir=output_dir,
-        #     decreasing=decreasing)
 
     # training scheme
     # FREEZE_EPOCH=40
     try:
         print('task_flops', TASK_FLOPS)
-        write_thetas(output_dir, model.module.thetas_main if is_parallel(model) else model.thetas_main, -1)
-        torch.save(model.state_dict(), os.path.join(output_dir, f'model_0.pt'))
+        # Aging Evolution
         best_archs, historical_best = train_epoch_zero_cost_EA(args.zc, model, dataloader_weight, optimizer, cfg, device=device, task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
-                                   cycles=100, est=model_est, logger=logger)
+                                   cycles=1000, est=model_est, logger=logger)
         # Export Model Config
         for topk, arch_info in enumerate(best_archs):
             filename = os.path.join(model_dir, f'{args.zc}-Top{topk+1}_f{TASK_FLOPS}.yaml')

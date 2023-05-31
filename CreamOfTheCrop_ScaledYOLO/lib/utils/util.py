@@ -268,9 +268,9 @@ def create_supernet_scheduler(cfg, optimizer):
     return scheduler, cfg.EPOCHS
 
 
-def write_thetas(output_dir, thetas, epoch, temperature=1.0):
-    alpha_distributions = stringify_theta(thetas)
-    beta_distributions  = stringify_theta(thetas, True, temperature)
+def write_thetas(output_dir, thetas, epoch, temperature):
+    alpha_distributions = stringify_theta(thetas, normalize=False)
+    beta_distributions  = stringify_theta(thetas, normalize=True, temperature=temperature)
     
     with open(os.path.join(output_dir, 'alpha_distribution.txt'), 'a') as f:
         f.write(f'epoch: {epoch}')
@@ -281,6 +281,18 @@ def write_thetas(output_dir, thetas, epoch, temperature=1.0):
 
 
 def stringify_theta(thetas, normalize=False, temperature=1.):
+    """
+    Convert Tensor to Numpy value in Architecture Parameter
+    
+    Parameter
+    ---------
+    normalize  : bool,  determine whether to use softmax to normalize or not
+    temperature: float, determine the temperature when using softmax normalize the architecture
+    
+    Return
+    ------
+    list of archtiecture value
+    """
     if normalize:
         normalize_func = lambda x: torch.nn.functional.softmax(x / temperature).detach().cpu().numpy()
     else:
@@ -292,7 +304,7 @@ def stringify_theta(thetas, normalize=False, temperature=1.):
         tmp_arch = { 'block_name': arch['block_name'] }
         if arch['block_name'] == 'Composite_Search':
             tmp_arch['operators_choice'] = normalize_func(arch['operators_choice'])
-            tmp_arch['operators'] = write_thetas(arch['operators'], normalize, temperature)
+            tmp_arch['operators'] = stringify_theta(arch['operators'], normalize=normalize, temperature=temperature)
         else:
             for key, value in arch.items():
                 if key == 'block_name': pass
@@ -344,6 +356,10 @@ def export_thetas(thetas, model, origin_config, output_file):
                 if 'gamma' in discrete_thetas[theta_idx].keys():
                     gamma_list.append(discrete_thetas[theta_idx]['gamma'])
                 theta_idx += 1
+
+            if 'Detect' in m:
+                arg.pop()
+    
     export_config['csp_gammas'] = gamma_list
     
     with open(output_file, 'w') as f:

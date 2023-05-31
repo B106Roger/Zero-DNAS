@@ -6,7 +6,7 @@ from mish_cuda import MishCuda as Mish
 # from torch.nn import ReLU as Mish
 from lib.utils.synflow import synflow, sum_arr
 
-TYPE = None # ZeroDNAS_Egor or DNAS or ZeroCost
+TYPE = 'DNAS' # ZeroDNAS_Egor or DNAS or ZeroCost
 
 def set_algorithm_type(type_literal):
     """

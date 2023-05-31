@@ -1,10 +1,6 @@
-AUTO_RESUME: False
 MODEL: 'Supernet_Training'
 SAVE_PATH: './experiments/workspace/train'
 SEED: 42 #44 #43 #42
-AMP: False
-OUTPUT: 'None'
-TTA: 0
 LOCAL_RANK: -1
 
 ##############################################################################
@@ -15,6 +11,12 @@ DATASET:
   INTERPOLATION: 'bilinear' # Image resize interpolation type
   BATCH_SIZE: 8 # #[Roger]2 batch size
 SEARCH_RESOLUTION: 416 # calculate the flops of each block
+
+NET:
+  EMA:
+    USE: True
+    FORCE_CPU: False # force model ema to be tracked on CPU
+    DECAY: 0.9998
 
 OPT: 'sgd'
 LR: 0.01
@@ -27,17 +29,9 @@ THETA_OPTIMIZER:
   MOMENTUM: 0.0
   WEIGHT_DECAY: 5e-4
 
-EPOCHS: 120
-##############################################################################
-FREEZE_EPOCH: 40
+EPOCHS: 120 #120
+FREEZE_EPOCH : 40 #40
+UPDATE_METHOD: 'ver1'
 TEMPERATURE:
-  DECAY: -0.045
-  MIN: -9999.99
-LOSS:
-  PARAM_LOSS: 0.01
-  FLOPS_LOSS: 0.1   # should be 0.1
-  DEPTH_LOSS: 0.01
-##############################################################################
-
-BATCHNORM:
-  SYNC_BN: False
+  INIT: 5.0 #4.0  # 1.5  # 2.5  # 5.0
+  FINAL: 0.1 #0.01 # 0.01 # 0.05 # 0.1

@@ -156,7 +156,7 @@ def labels_to_class_weights(labels, nc=80):
 def labels_to_image_weights(labels, nc=80, class_weights=np.ones(80)):
     # Produces image weights based on class mAPs
     n = len(labels)
-    class_counts = np.array([np.bincount(labels[i][:, 0].astype(np.int), minlength=nc) for i in range(n)])
+    class_counts = np.array([np.bincount(labels[i][:, 0].astype(np.int32), minlength=nc) for i in range(n)])
     image_weights = (class_weights.reshape(1, nc) * class_counts).sum(1)
     # index = random.choices(range(n), weights=image_weights, k=1)  # weight image sample
     return image_weights
@@ -808,7 +808,7 @@ def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, 
         # If none remain process next image
         n = x.shape[0]  # number of boxes
         if not n:
-            print(f'no bbox in image {xi}')
+            # print(f'no bbox in image {xi}')
             continue
 
         # Sort by confidence
@@ -1873,7 +1873,19 @@ def test(data,
 def is_parallel(model):
     return type(model) in (nn.parallel.DataParallel, nn.parallel.DistributedDataParallel)
 
-
+_RNAD_=0
+def random_testing(tag='', out=[True, False, False]):
+    global _RNAD_
+    _RNAD_+=1
+    if tag == '': tag = 'START'
+    print(f'[Random Test{_RNAD_}] {tag}')
+    a=torch.rand((4,), dtype=torch.float32).numpy()
+    b=np.random.rand(4)
+    c=random.random()
+    if out[0]: print(f'[Random Test{_RNAD_}] pytorch {a}')
+    if out[1]: print(f'[Random Test{_RNAD_}] numpy   {b}')
+    if out[2]: print(f'[Random Test{_RNAD_}] python  {c:.6f}')
+    
 
 class ModelEMA:
     """ Model Exponential Moving Average from https://github.com/rwightman/pytorch-image-models
@@ -1890,23 +1902,66 @@ class ModelEMA:
         self.ema = deepcopy(model.module if is_parallel(model) else model).eval()  # FP32 EMA
         # if next(model.parameters()).device.type != 'cpu':
         #     self.ema.half()  # FP16 EMA
-        self.updates = updates  # number of EMA updates
-        self.decay = lambda x: decay * (1 - math.exp(-x / 2000))  # decay exponential ramp (to help early epochs)
+        self.updates      = updates  # number of EMA updates
+        self.updates_arch = updates  # number of EMA updates
+        self.decay        = lambda x: decay * (1 - math.exp(-x / 2000))  #2000 decay exponential ramp (to help early epochs)
+        self.decay_arch   = lambda x: decay * (1 - math.exp(-x / 100))  #25 decay exponential ramp (to help early epochs)
+        
         for p in self.ema.parameters():
             p.requires_grad_(False)
 
-    def update(self, model):
+    def update(self, model, update_arch):
         # Update EMA parameters
-        with torch.no_grad():
-            self.updates += 1
-            d = self.decay(self.updates)
+        # nn.module parameters only !!
+        if not update_arch:
+            with torch.no_grad():
+                self.updates += 1
+                d = self.decay(self.updates)
 
-            msd = model.module.state_dict() if is_parallel(model) else model.state_dict()  # model state_dict
-            for k, v in self.ema.state_dict().items():
-                if v.dtype.is_floating_point:
-                    v *= d
-                    v += (1. - d) * msd[k].detach()
+                msd = model.module.state_dict() if is_parallel(model) else model.state_dict()  # model state_dict
+                for k, v in self.ema.state_dict().items():
+                    if v.dtype.is_floating_point:
+                        v *= d
+                        v += (1. - d) * msd[k].detach()
 
+        # Update theta parameters
+        if update_arch:
+            with torch.no_grad():
+                self.updates_arch += 1
+                d = self.decay_arch(self.updates_arch)
+                
+                model_theta = model.module.thetas_main if is_parallel(model) else model.thetas_main
+                for stage_idx, arch in enumerate(self.ema.thetas_main):
+                    if 'Composite' in arch['block_name']:
+                        # ENA Update
+                        arch['operators_choice'] *= d
+                        arch['operators_choice'] += (1. - d) * model_theta[stage_idx]['operators_choice'].detach()
+
+                        for choice_arch in arch['operators']:
+                            for op_idx, (key, value) in enumerate(choice_arch.items()):
+                                if key != 'block_name':
+                                    # ENA Update
+                                    choice_arch[key] *= d
+                                    choice_arch[key] += (1. - d) * model_theta[stage_idx]['operators'][op_idx][key].detach()
+                        
+                    elif 'Search' in arch['block_name']:
+                        for key, value in arch.items():
+                            if key != 'block_name':
+                                ###########################
+                                # ENA Update
+                                ###########################
+                                # arch[key] *= d
+                                # arch[key] += (1. - d) * model_theta[stage_idx][key].detach()
+                                
+                                ###########################
+                                # Directly Update
+                                ###########################
+                                arch[key] = model_theta[stage_idx][key].detach()
+        
+        # Update temperature
+        self.ema.temperature = model.module.temperature if is_parallel(model) else model.temperature
+        
+        
     def update_attr(self, model, include=(), exclude=('process_group', 'reducer')):
         # Update EMA attributes
         copy_attr(self.ema, model, include, exclude)
