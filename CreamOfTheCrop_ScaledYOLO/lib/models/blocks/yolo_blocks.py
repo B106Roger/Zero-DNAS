@@ -73,6 +73,7 @@ class Conv(nn.Module):
     def fuseforward(self, x):
         return self.act(self.conv(x))
 
+
 class ConvNP(nn.Module):
     # Not Prunable
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
@@ -97,7 +98,7 @@ class ConvNP(nn.Module):
 
     def fuseforward(self, x):
         return self.act(self.conv(x))
-
+    
 class Bottleneck(nn.Module):
     # Standard bottleneck
     def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, shortcut, groups, expansion
@@ -107,7 +108,6 @@ class Bottleneck(nn.Module):
         self.cv2 = Conv(c_, c2, 3, 1, g=g)
         self.add = shortcut and c1 == c2
         self.block_name = f'bottle'
-
 
     def get_block_name(self):
         return self.block_name
@@ -129,6 +129,7 @@ class Concat(nn.Module):
     def forward(self, x):
         return torch.cat(x, self.d)
 
+    
 class BottleneckCSP(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, e=0.5, shortcut=True, g=1):  # ch_in, ch_out, number, shortcut, groups, expansion
@@ -178,13 +179,6 @@ class BottleneckCSP(nn.Module):
         return self.block_name
 
 
-
-    # def forward(self, x):
-    #     y1 = self.cv3(self.m(self.cv1(x)))
-    #     y2 = self.cv2(x)
-    #     return self.cv4(self.act(self.bn(torch.cat((y1, y2), dim=1))))
-
-
 class C3(nn.Module):
     # CSP Bottleneck with 3 convolutions
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
@@ -216,7 +210,6 @@ class Upsample(nn.Module):
 
     def forward(self, x):
         return self.upsample(x)
-
 
 class BottleneckCSP2(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
@@ -279,8 +272,7 @@ class BottleneckCSP2(nn.Module):
         #     y2 = self.cv2(x1) * mask
         #     return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
 
-        
-        
+    
 class SPP(nn.Module):
     # Spatial pyramid pooling layer used in YOLOv3-SPP
     def __init__(self, c1, c2, k=(5, 9, 13)):
@@ -298,8 +290,6 @@ class SPP(nn.Module):
     def forward(self, x):
         x = self.cv1(x)
         return self.cv2(torch.cat([x] + [m(x) for m in self.m], 1))
-
-
 
 class SPPCSP(nn.Module):
     # CSP SPP https://github.com/WongKinYiu/CrossStagePartialNetworks
@@ -334,7 +324,6 @@ class SPPCSP(nn.Module):
         y1 = self.cv6(self.cv5(torch.cat([x1] + [m(x1) for m in self.m], 1)))
         y2 = self.cv2(x)
         return self.cv7(self.act(self.bn(torch.cat((y1, y2), dim=1))))
-
 
 class Detect(nn.Module):
     def __init__(self, nc=80, anchors=(), ch=()):  # detection layer

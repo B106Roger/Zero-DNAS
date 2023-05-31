@@ -281,6 +281,9 @@ def main():
     dataloader_weight, dataset_weight = create_dataloader(train_weight_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
                                             cache=args.cache_images, rect=args.rect,
                                             world_size=args.world_size)
+    # dataloader_weight, dataset_weight = create_dataloader(train_weight_path, imgsz, 2, gs, args, hyp=hyp, augment=True,
+    #                                         cache=args.cache_images, rect=args.rect,
+    #                                         world_size=args.world_size)
     # dataloader_thetas, dataset_thetas = create_dataloader(train_thetas_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
     #                                         cache=args.cache_images, rect=args.rect,
     #                                         world_size=args.world_size)
