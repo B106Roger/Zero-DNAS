@@ -32,25 +32,16 @@ except ImportError:
 
 # import models and training functions
 from lib.utils.flops_table import FlopsEst
-# from lib.core.train import train_epoch, validate, train_epoch_zero_cost_rand
-from lib.core.search import validate, train_epoch_zero_cost_rand, train_epoch_zero_cost_EA
-
+from lib.core.search import train_epoch_zero_cost_rand, train_epoch_zero_cost_EA
 from lib.models.structures.supernet import gen_supernet
-from lib.models.PrioritizedBoard import PrioritizedBoard
-from lib.models.MetaMatchingNetwork import MetaMatchingNetwork
-from lib.config import DEFAULT_CROP_PCT, IMAGENET_DEFAULT_STD, IMAGENET_DEFAULT_MEAN
 from lib.utils.util import convert_lowercase, get_logger, \
     create_optimizer_supernet, create_supernet_scheduler, stringify_theta, write_thetas, export_thetas
 from lib.utils.datasets import create_dataloader
-from lib.utils.kd_utils import FeatureAdaptation
-from lib.models.blocks.yolo_blocks import Conv, ConvNP, BottleneckCSP, BottleneckCSP2, set_algorithm_type
 from lib.utils.general import check_img_size, labels_to_class_weights, is_parallel, compute_loss, test, ModelEMA
 from lib.utils.torch_utils import select_device
-from lib.utils.attentive_sampling import collect_samples
-from scipy.special import softmax
-from lib.models.AttentiveNasSampler import ArchSampler
 from lib.config import cfg
 import argparse
+import random
 
 def config_backup(config_bakup_dir, code_backup_dir, args):
     os.makedirs(config_bakup_dir, exist_ok=True)
@@ -109,26 +100,21 @@ def parse_config_args(exp_name):
     return args, converted_cfg
 
 task_dict = {
-    'DNAS-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, },
-    'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, },
-    'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, },
+    'DNAS-25':     { 'GFLOPS': 25,  'PARAMS': None, },
+    'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': None, },
+    'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': None, },
     
-    'DNAS-70':     { 'GFLOPS': 70.3,  'PARAMS': 70.4, },
-    'DNAS-60':     { 'GFLOPS': 60,  'PARAMS': 34.84, },
-    'DNAS-50':     { 'GFLOPS': 50,  'PARAMS': 34.84, },
-    'DNAS-40':     { 'GFLOPS': 40,  'PARAMS': 34.84, },
-    'DNAS-30':     { 'GFLOPS': 30,  'PARAMS': 34.84, },
-    
-
-    'DNAS-S1-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
-    'DNAS-S1-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
-    'DNAS-S1-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
-    
-    'NAS-SS': { 'GFLOPS': 5.7,  'PARAMS': 32.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
-    'NAS-S':  { 'GFLOPS': 7.0,  'PARAMS': 36.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
-    'NAS-M':  { 'GFLOPS': 9.0,  'PARAMS': 40.0, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
-    'NAS':    { 'GFLOPS': 11.9, 'PARAMS': 52.5, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
-    'NAS-L':  { 'GFLOPS': 16.5, 'PARAMS': 70.2, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'DNAS-70':     { 'GFLOPS': 70,  'PARAMS': None, },
+    'DNAS-60':     { 'GFLOPS': 60,  'PARAMS': None, },
+    'DNAS-50':     { 'GFLOPS': 50,  'PARAMS': None, },
+    'DNAS-40':     { 'GFLOPS': 40,  'PARAMS': None, },
+    'DNAS-30':     { 'GFLOPS': 30,  'PARAMS': None, },
+        
+    'NAS-SS': { 'GFLOPS': 5.7,  'PARAMS': 32.0, }, #'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'NAS-S':  { 'GFLOPS': 7.0,  'PARAMS': 36.0, }, #'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'NAS-M':  { 'GFLOPS': 9.0,  'PARAMS': 40.0, }, #'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'NAS':    { 'GFLOPS': 11.9, 'PARAMS': 52.5, }, #'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'NAS-L':  { 'GFLOPS': 16.5, 'PARAMS': 70.2, }, #'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
 }
 
 def main():
@@ -183,7 +169,7 @@ def main():
     torch.backends.cudnn.benchmark = False
 
     # set search space argument
-    set_algorithm_type('DNAS')
+    # set_algorithm_type('DNAS')
     # generate supernet
     # print('SEARCH_SPACES', SEARCH_SPACES)
     model, sta_num, resolution = gen_supernet(
@@ -195,7 +181,7 @@ def main():
     
     # print(model)
     # initialize meta matching networks
-    MetaMN = MetaMatchingNetwork(cfg)
+    # MetaMN = MetaMatchingNetwork(cfg)
     
     # number of choice blocks in supernet
     if args.local_rank == 0:
@@ -207,14 +193,6 @@ def main():
 
     # initialize flops look-up table
     model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE), search_space=SEARCH_SPACES)
-
-
-    # optionally resume from a checkpoint
-    # optimizer_state = None
-    # resume_epoch = None
-    # if cfg.AUTO_RESUME:
-    #     optimizer_state, resume_epoch = resume_checkpoint(
-    #         model, cfg.RESUME_PATH)
 
     # create optimizer and resume from checkpoint
     if args.resume_theta_training:
@@ -253,10 +231,6 @@ def main():
     # create learning rate scheduler
     lr_scheduler, num_epochs = create_supernet_scheduler(cfg, optimizer)
 
-    # start_epoch = resume_epoch if resume_epoch is not None else 0
-    # if start_epoch > 0:
-    #     lr_scheduler.step(start_epoch)
-
     if args.local_rank == 0:
         logger.info('Scheduled epochs: %d', num_epochs)
 
@@ -281,12 +255,7 @@ def main():
     dataloader_weight, dataset_weight = create_dataloader(train_weight_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
                                             cache=args.cache_images, rect=args.rect,
                                             world_size=args.world_size)
-    # dataloader_weight, dataset_weight = create_dataloader(train_weight_path, imgsz, 2, gs, args, hyp=hyp, augment=True,
-    #                                         cache=args.cache_images, rect=args.rect,
-    #                                         world_size=args.world_size)
-    # dataloader_thetas, dataset_thetas = create_dataloader(train_thetas_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
-    #                                         cache=args.cache_images, rect=args.rect,
-    #                                         world_size=args.world_size)
+
     mlc = np.concatenate(dataset_weight.labels, 0)[:, 0].max()  # max label class
     nb = len(dataloader_weight)  # number of batches
     assert mlc < nc, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (mlc, nc, args.data, nc - 1)
@@ -300,28 +269,18 @@ def main():
 
     ema = ModelEMA(model) if args.local_rank in [-1, 0] else None
 
-    
-    train_loss_fn = compute_loss
-    validate_loss_fn = compute_loss
-    
-    synflow_cache = {}
-    # initialize training parameters
-    eval_metric = cfg.EVAL_METRICS
-    best_metric, best_epoch, saver, best_children_pool = None, None, None, []
-    if args.local_rank == 0:
-        decreasing = True if eval_metric == 'loss' else False
-
     # training scheme
     # FREEZE_EPOCH=40
     try:
         print('task_flops', TASK_FLOPS)
         # Aging Evolution
         best_archs, historical_best = train_epoch_zero_cost_EA(args.zc, model, dataloader_weight, optimizer, cfg, device=device, task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
-                                   cycles=1000, est=model_est, logger=logger)
+            cycles=1000, est=model_est, logger=logger)
         # Export Model Config
         for topk, arch_info in enumerate(best_archs):
             filename = os.path.join(model_dir, f'{args.zc}-Top{topk+1}_f{TASK_FLOPS}.yaml')
             export_thetas(arch_info['arch'], model, model.model_args, filename)
+            
         filename = os.path.join(model_dir, f'{args.zc}-best_f{TASK_FLOPS}.yaml')
         export_thetas(historical_best['arch'], model, model.model_args, filename)
     except KeyboardInterrupt:

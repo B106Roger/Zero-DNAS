@@ -29,13 +29,11 @@ except ImportError:
 
 # import models and training functions
 from lib.utils.flops_table import FlopsEst
-from lib.core.train import train_epoch, validate, train_epoch_dnas, train_epoch_dnas_V2
+from lib.core.train import train_epoch_dnas, train_epoch_dnas_V2
 from lib.models.structures.supernet import gen_supernet
-from lib.config import DEFAULT_CROP_PCT, IMAGENET_DEFAULT_STD, IMAGENET_DEFAULT_MEAN
 from lib.utils.util import convert_lowercase, get_logger, \
     create_optimizer_supernet, create_supernet_scheduler, stringify_theta, write_thetas, export_thetas
 from lib.utils.datasets import create_dataloader
-from lib.models.blocks.yolo_blocks import Conv, ConvNP, BottleneckCSP, BottleneckCSP2, set_algorithm_type
 from lib.utils.general import check_img_size, labels_to_class_weights, is_parallel, compute_loss, test, ModelEMA, random_testing
 from lib.utils.torch_utils import select_device
 from lib.config import cfg
@@ -60,7 +58,6 @@ def config_backup(config_bakup_dir, code_backup_dir, args):
     shutil.copy('lib/models/blocks/yolo_blocks_search.py',os.path.join(code_backup_dir, 'yolo_blocks_search.py'))
     shutil.copy('lib/models/builders/build_supernet.py',  os.path.join(code_backup_dir, 'build_supernet.py'))
     shutil.copy('lib/utils/general.py',                   os.path.join(code_backup_dir, 'general.py'))
-    
 
 def parse_config_args(exp_name):
     parser = argparse.ArgumentParser(description=exp_name)
@@ -98,26 +95,21 @@ def parse_config_args(exp_name):
     return args, converted_cfg
 
 task_dict = {
-    'DNAS-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, },
-    'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, },
-    'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, },
+    'DNAS-25':     { 'GFLOPS': 25,  'PARAMS': None, },
+    'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': None, },
+    'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': None, },
     
-    'DNAS-70':     { 'GFLOPS': 70.3,  'PARAMS': 70.4, },
-    'DNAS-60':     { 'GFLOPS': 60,  'PARAMS': 34.84, },
-    'DNAS-50':     { 'GFLOPS': 50,  'PARAMS': 34.84, },
-    'DNAS-40':     { 'GFLOPS': 40,  'PARAMS': 34.84, },
-    'DNAS-30':     { 'GFLOPS': 30,  'PARAMS': 34.84, },
-    
-
-    'DNAS-S1-25':     { 'GFLOPS': 25,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
-    'DNAS-S1-35':     { 'GFLOPS': 35,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
-    'DNAS-S1-45':     { 'GFLOPS': 45,  'PARAMS': 34.84, 'CHOICES': {'n_bottlenecks': [0, 1, 2, 3], 'gamma': [0.25, 0.50, 0.75, 1.0]}},
-    
-    'NAS-SS': { 'GFLOPS': 5.7,  'PARAMS': 32.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
-    'NAS-S':  { 'GFLOPS': 7.0,  'PARAMS': 36.0, 'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
-    'NAS-M':  { 'GFLOPS': 9.0,  'PARAMS': 40.0, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
-    'NAS':    { 'GFLOPS': 11.9, 'PARAMS': 52.5, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
-    'NAS-L':  { 'GFLOPS': 16.5, 'PARAMS': 70.2, 'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'DNAS-70':     { 'GFLOPS': 70,  'PARAMS': None, },
+    'DNAS-60':     { 'GFLOPS': 60,  'PARAMS': None, },
+    'DNAS-50':     { 'GFLOPS': 50,  'PARAMS': None, },
+    'DNAS-40':     { 'GFLOPS': 40,  'PARAMS': None, },
+    'DNAS-30':     { 'GFLOPS': 30,  'PARAMS': None, },
+        
+    'NAS-SS': { 'GFLOPS': 5.7,  'PARAMS': 32.0, }, #'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'NAS-S':  { 'GFLOPS': 7.0,  'PARAMS': 36.0, }, #'CHOICES': {'n_bottlenecks': [0, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'NAS-M':  { 'GFLOPS': 9.0,  'PARAMS': 40.0, }, #'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'NAS':    { 'GFLOPS': 11.9, 'PARAMS': 52.5, }, #'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
+    'NAS-L':  { 'GFLOPS': 16.5, 'PARAMS': 70.2, }, #'CHOICES': {'n_bottlenecks': [8, 6, 4, 2], 'gamma': [0.25, 0.5, 0.75]}},
 }
 
 def main():
@@ -140,12 +132,9 @@ def main():
     model_dir        = os.path.join(output_dir, 'model')
     model_w_dir      = os.path.join(output_dir, 'model_weights')
     
-    
     os.makedirs(model_dir, exist_ok=True)
     os.makedirs(theta_dir, exist_ok=True)
     os.makedirs(model_w_dir, exist_ok=True)
-    
-    
     config_backup(config_bakup_dir, code_backup_dir, args)
 
     if args.local_rank == 0:
@@ -163,7 +152,6 @@ def main():
     cfg.NUM_GPU = torch.cuda.device_count()
     cfg.WORKERS = torch.cuda.device_count()
     
-    # torch.distributed.init_process_group(backend='nccl', init_method='env://')
     args.world_size = 1
     args.global_rank = -1
     if args.local_rank == 0:
@@ -194,18 +182,9 @@ def main():
         logger.info('Supernet created, param count: %.2f M', (
             sum([m.numel() for m in model.parameters()]) / 1e6))
         logger.info('resolution: %d', (cfg.DATASET.IMAGE_SIZE))
-        # logger.info('choice number: %d', (choice_num))
-
 
     # initialize flops look-up table
     model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE), search_space=SEARCH_SPACES)
-
-    # optionally resume from a checkpoint
-    # optimizer_state = None
-    # resume_epoch = None
-    # if cfg.AUTO_RESUME:
-    #     optimizer_state, resume_epoch = resume_checkpoint(
-    #         model, cfg.RESUME_PATH)
 
     # create optimizer and resume from checkpoint
     if args.resume_theta_training:
@@ -298,12 +277,12 @@ def main():
         testloader = create_dataloader(test_path, imgsz_test, 16, gs, args, hyp=hyp, augment=False,
                                        cache=args.cache_images, rect=True, local_rank=-1, world_size=args.world_size)[0]
     
-    start_epoch = 1
+    start_epoch = 0
     MODEL_WEIGHT_NAME = os.path.join(args.pretrain_dir, f'model_{cfg.FREEZE_EPOCH}.pt') 
     EMA_WEIGHT_NAME   = os.path.join(args.pretrain_dir, f'ema_pretrained_{cfg.FREEZE_EPOCH}.pt') 
     OPTIMIZER_NAME    = os.path.join(args.pretrain_dir, f'optimizer_{cfg.FREEZE_EPOCH}.pt')
     if args.pretrain_dir != '':
-        start_epoch = 41
+        start_epoch = 40
         
         # Load Supernet MOdel
         model.load_state_dict(torch.load(MODEL_WEIGHT_NAME), strict=False)
@@ -321,7 +300,7 @@ def main():
             optimizer.load_state_dict(torch.load(OPTIMIZER_NAME))
         
         # Restore Learning Rate
-        for i in range(1, start_epoch): lr_scheduler.step()
+        lr_scheduler.step(start_epoch)
         
         # Calculate mAP of pretrain weights
         _, _, map50, *other = test(
@@ -341,7 +320,7 @@ def main():
         filename = os.path.join(model_dir, f'DNAS-current_f{TASK_FLOPS}.yaml')
         export_thetas(model.softmax_sampling(detach=True), model, model.model_args, filename)
 
-        for epoch in range(start_epoch, num_epochs+1):
+        for epoch in range(start_epoch+1, num_epochs+1):
             model.train()
             thetas_enable = False if epoch <= cfg.FREEZE_EPOCH else True
             # if epoch <= cfg.FREEZE_EPOCH:

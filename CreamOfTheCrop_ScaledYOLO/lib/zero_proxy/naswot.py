@@ -4,15 +4,27 @@ import torch.nn.functional as F
 from lib.utils.util import *
 from lib.utils.general import compute_loss, test, plot_images, is_parallel, build_foreground_mask, compute_sensitive_loss
 from lib.models.blocks.yolo_blocks import *
+from lib.models.blocks.yolo_blocks_search import *
+
+import numpy as np
 
 PREPROCESSED=False
 BATCH_SIZE=2
 def preprocess_model(model):
-    
     def init_forward_hook(module, inp, out):
-        # print('init hook', str(type(module)))
+        # print('counting hook', str(type(module)))
+        # try:
+        # if not module.visited_backwards:
+        #     return
         model.K = 0.0
-        # exit()
+        if isinstance(inp, tuple):
+            inp = inp[0]
+        inp = inp.view(inp.size(0), -1)
+        inp = inp[:BATCH_SIZE]
+        x = (inp > 0).float()
+        K = x @ x.t()
+        K2 = (1.-x) @ (1.-x.t())
+        model.K = model.K + K.cpu().numpy() + K2.cpu().numpy()
     
     def counting_forward_hook(module, inp, out):
         # print('counting hook', str(type(module)))
@@ -27,17 +39,29 @@ def preprocess_model(model):
         K = x @ x.t()
         K2 = (1.-x) @ (1.-x.t())
         model.K = model.K + K.cpu().numpy() + K2.cpu().numpy()
-        
+
+
+    block_num = len(model.blocks)
+    block_id  = 0
+    first_hook = True
+    white_list = [BottleneckCSP_Search, BottleneckCSP2_Search, Conv, Bottleneck, SPPCSP]
     for module_idx, (name, module) in enumerate(model.named_modules()):
-        # print(f'{module_idx:02d} {name:25s} {str(type(module))}')
-        if 'Mish' in str(type(module)):
-            print('register hook', name)
-            module.visited_backwards = False
-            module.register_forward_hook(counting_forward_hook)
-        elif module_idx == 3:
-            module.visited_backwards = False
-            module.register_forward_hook(init_forward_hook)
-            
+        # print(str(type(module)), name)
+        # if 'Mish' in str(type(module)):
+        # if 'Search' in str(type(module)):
+        if name == f'blocks.{block_id}':
+            if module.__class__ in white_list:
+                print('register hook', name, str(type(module)))
+                module.visited_backwards = False
+                if first_hook:
+                    module.register_forward_hook(init_forward_hook)
+                    # module.register_forward_hook(create_init_hook(name))
+                    first_hook = False
+                else:
+                    module.register_forward_hook(counting_forward_hook)
+                    # module.register_forward_hook(create_hook(name))
+            block_id += 1
+
 def calculate_wot(model, arch_prob, inputs, targets, opt=None):
     global PREPROCESSED
     if not PREPROCESSED: 
@@ -46,44 +70,13 @@ def calculate_wot(model, arch_prob, inputs, targets, opt=None):
     
     is_ddp = is_parallel(model)
     model = model.module if is_ddp else model
-    DEBUG = False
     
     pred     = model(inputs, arch_prob)
     
-    det_loss, loss_items = compute_loss(pred[1], targets, model)  # scaled by batch_size
-    det_loss = det_loss[0]
+    s, ld = np.linalg.slogdet(model.K)
+    wot_value = ld
+    return wot_value
 
-    ##################################
-    # Discard Gradient 
-    ##################################
-    model.zero_grad()
-    if opt is not None: opt.zero_grad()
-    
-    det_loss.backward()
-
-    keys = sorted(model.search_space.keys())
-     
-    snip_value = 0
-    for block_idx, layer in enumerate(model.blocks):
-        chosen_block = layer
-            
-        if ('Search' in layer.__class__.__name__):
-            for n, p in chosen_block.named_parameters():
-                if 'mask' in n:
-                    assert(p.grad is None)
-                else:
-                    tmp_value = (p * p.grad).abs().sum()
-                    snip_value += tmp_value
-                    if DEBUG:
-                        if 'bn' not in n:
-                            print(f'{n} : ', p.shape, p.sum(), tmp_value.detach().cpu(), )
-                        
-
-    ##################################
-    # Discard Gradient 
-    ##################################
-    model.zero_grad()
-    if opt is not None: opt.zero_grad()
-    
-    return snip_value.detach().cpu().numpy()
-
+def calculate_zero_cost_map(model, arch_prob, inputs, targets, opt=None):
+    zc_map = {}
+    return zc_map
