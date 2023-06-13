@@ -212,6 +212,9 @@ def train(hyp, opt, device, tb_writer=None):
         print('Using %g dataloader workers' % dataloader.num_workers)
         print('Starting training for %g epochs...' % epochs)
     # torch.autograd.set_detect_anomaly(True)
+    model_time = 0.0
+    data_time  = 0.0
+    cnt = 0.0
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         model.train()
 
@@ -241,13 +244,20 @@ def train(hyp, opt, device, tb_writer=None):
             dataloader.sampler.set_epoch(epoch)
         pbar = enumerate(dataloader)
         if rank in [-1, 0]:
-            print(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'GIoU', 'obj', 'cls', 'total', 'targets', 'img_size'))
+            print(('\n' + '%10s' * 11) % ('Epoch', 'gpu_mem', 'GIoU', 'obj', 'cls', 'total', 'targets', 'img_size', 'model_t', 'ema_t', 'data_t'))
             pbar = tqdm(pbar, total=nb)  # progress bar
         optimizer.zero_grad()
+        
+        m_data_time  = 0.0
+        m_model_time = 0.0
+        m_ema_time   = 0.0
+        ema_cnt      = 0
+        
+        data_time = time.time()
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
             ni = i + nb * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
-
+            data_time = time.time() - data_time
             # Warmup
             if ni <= nw:
                 xi = [0, nw]  # x interp
@@ -261,6 +271,7 @@ def train(hyp, opt, device, tb_writer=None):
 
             # Multi-scale
             if opt.multi_scale:
+                raise ValueError("No multi-scale training")
                 sz = random.randrange(imgsz * 0.5, imgsz * 1.5 + gs) // gs * gs  # size
                 sf = sz / max(imgs.shape[2:])  # scale factor
                 if sf != 1:
@@ -269,6 +280,7 @@ def train(hyp, opt, device, tb_writer=None):
 
             if use_amp:
                 # Autocast
+                model_time = time.time()
                 with amp.autocast(enabled=cuda):
                     # Forward                
                     pred = model(imgs)
@@ -282,7 +294,9 @@ def train(hyp, opt, device, tb_writer=None):
                     #     print('WARNING: non-finite loss, ending training ', loss_items)
                     #     return results
                 scaler.scale(loss).backward()
+                model_time = time.time() - model_time
             else:
+                raise ValueError("should run in amp mode")
                 pred = model(imgs)
                 loss, loss_items = compute_loss(pred, targets.to(device), model)  # scaled by batch_size
                 loss *= opt.world_size  # gradient averaged between devices in DDP mode
@@ -297,16 +311,26 @@ def train(hyp, opt, device, tb_writer=None):
                     optimizer.step()
                 optimizer.zero_grad()
                 if ema is not None:
+                    ema_time = time.time()
+                    
                     ema.update(model)
-
+                    
+                    ema_time = time.time() - ema_time
+                    m_ema_time = (m_ema_time * ema_cnt + ema_time) / (ema_cnt + 1)
+                    ema_cnt += 1
             # Print
             if rank in [-1, 0]:
+                m_data_time = (m_data_time * i + data_time) / (i + 1)
+                m_model_time = (m_model_time * i + model_time) / (i + 1)
+                # m_ema_time = (m_ema_time * ema_cnt + ema_time) / (ema_cnt + 1)
+                
+                
                 mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-                s = ('%10s' * 2 + '%10.4g' * 6) % (
-                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
+                s = ('%10s' * 2 + '%10.4g' * 9) % (
+                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1], m_model_time, m_ema_time, m_data_time)
                 pbar.set_description(s)
-
+                
                 # Plot
                 if ni < 3:
                     f = str(log_dir / ('train_batch%g.jpg' % ni))  # filename
@@ -315,6 +339,7 @@ def train(hyp, opt, device, tb_writer=None):
                         tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
                         # tb_writer.add_graph(model, imgs)  # add model to tensorboard
 
+            data_time = time.time()
             # end batch ------------------------------------------------------------------------------------------------
 
         # Scheduler
