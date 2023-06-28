@@ -339,7 +339,7 @@ def train_epoch_zero_cost_EA(proxy_name, model, dataloader, optimizer, cfg, devi
     
     naive_model  = model.module if is_ddp else model
     search_space = naive_model.search_space
-    
+    model.eval()
     ##################################################################
     ### 0st. Select Dataset
     ##################################################################    
@@ -385,18 +385,18 @@ def train_epoch_zero_cost_EA(proxy_name, model, dataloader, optimizer, cfg, devi
     logger.info(s)
     logger.info(f"small_arch => Architecture : {str(small_arch['arch'])}")
 
-    res = export_thetas(small_arch['arch'], model, model.model_args, './test123.yaml')
+    # res = export_thetas(small_arch['arch'], model, model.model_args, './test123.yaml')
     # print(res)
     # exit()
     # manually_arch = [
-    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1.])}, 
-    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([1., 0.])}, 
-    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1.])}, 
-    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1.])}, 
-    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0.])},
-    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1.])},
-    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0.])},
-    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0.])} 
+    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1., 0, 0])}, 
+    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([1., 0., 0, 0])}, 
+    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1., 0, 0])}, 
+    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1., 0, 0])}, 
+    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0., 0, 0])},
+    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1., 0, 0])},
+    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0., 0, 0])},
+    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0., 0, 0])} 
     # ]
     # man_arch = {'arch' : manually_arch, 'arch_type': 'continuous'}
     # get_model_info(man_arch, info_funcs)
@@ -405,6 +405,22 @@ def train_epoch_zero_cost_EA(proxy_name, model, dataloader, optimizer, cfg, devi
     # logger.info(f"man_arch => Architecture : {str(man_arch['arch'])}")
     
     
+    # manually_arch = [
+    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1., 0, 0])}, 
+    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([1., 0., 0, 0])}, 
+    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1., 0, 0])}, 
+    #     {'block_name': 'BottleneckCSP_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1., 0, 0])}, 
+    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0., 0, 0])},
+    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1., 0, 0])},
+    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0., 0, 0])},
+    #     {'block_name': 'BottleneckCSP2_Search_num1_gamma0.75', 'gamma': torch.tensor([1., 0., 1.]), 'n_bottlenecks': torch.tensor([1., 0., 0, 0])} 
+    # ]
+    # man_arch = {'arch' : manually_arch, 'arch_type': 'continuous'}
+    # get_model_info(man_arch, info_funcs)
+    # s = f"man_arch22 => FLOPS: {man_arch['flops']:.2f} Params: {man_arch['params']:.2f} {proxy_name}: {man_arch[proxy_name]:e}"
+    # logger.info(s)
+    # logger.info(f"man_arch22 => Architecture : {str(man_arch['arch'])}")
+    # exit()
     ########################################################
     # Init Pool
     ########################################################

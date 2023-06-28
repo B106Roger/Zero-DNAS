@@ -42,6 +42,9 @@ python tools/train_dmasking.py --cfg config/search/train_dnas.yaml --data config
 # Train Zero-Cost EA
 python ./tools/train_zero_cost.py --cfg config/search/train_dnas.yaml --data config/dataset/voc_dnas.yaml --hyp config/training/hyp.scratch.yaml --model config/model/Search-YOLOv4-P5.yaml --device GPU_ID --exp_name EXP_NAME  --nas HARDWARE_CONSTRAINT --zc snip
 
+# Train ZeroDNAS
+python tools/train_zdnas.py --cfg config/search/train_zdnas.yaml --data ./config/dataset/voc_dnas.yaml --hyp ./config/training/hyp.scratch.yaml --model ./config/model/Search-YOLOv4-CSP.yaml --device GPU_ID --exp_name EXP_NAME --nas HARDWARE_CONSTRAINT -zc wot
+
 # Train Zero-DNAS
 TO-BE-CONTINUE
 

@@ -732,6 +732,64 @@ class SuperNet(nn.Module):
             block_id += 1
         return overall_layers
 
+    def calculate_zc(self, architecture_info, zc_map):
+        """
+        Params
+        ------
+        architecutre_info : architecture distribution
+        zc_map : a dict that store the zero cost value of each candidate block
+        
+        Returns
+        -------
+        overall_zc: torch.tensor(1,), M-FLOPS
+        """
+        SHOW_ZC_STAT = False
+        keys = sorted(self.search_space.keys())
+        architecture = architecture_info['arch']
+        architecture_type = architecture_info['arch_type']
+        
+        current_theta = 0
+        overall_zc = 0
+        for block_idx, block in enumerate(self.blocks):         
+            block_idx = str(block_idx)
+            # [Discrete Mode] use architecture to sample subnetwork to do inference
+            if architecture_type == 'discrete':
+                raise ValueError("Not Implement")
+
+            # [Continuous Mode] use architecture distribtuion and weighted-sum their output to do inference
+            elif architecture_type == 'continuous':
+                layer_zc = 0.0
+                if 'Search' in block.__class__.__name__:
+                    # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
+                    soft_mask_variables = architecture[current_theta]
+                    options, search_keys = block.generate_options()
+                    
+                    for option in options:
+                        prob = 1.0
+                        query_keys = []
+                        for key_idx, key in enumerate(search_keys):
+                            option_index = option[key_idx]
+                            option_value = block.search_space[key][option_index]
+                            option_prob  = soft_mask_variables[key][option_index]
+                            query_keys.append(f'{key}{option_value}')
+                            prob *= option_prob
+                            
+                        
+                        query_key      = '-'.join(query_keys)
+                        choice_zc = zc_map[current_theta][query_key]
+                        if SHOW_ZC_STAT: print(f'[ZC opt={query_keys}] flops={choice_zc} prob={prob} mut={choice_zc * prob}')
+                        layer_zc += choice_zc * prob
+
+                    current_theta += 1
+                else:
+                    pass
+                    # layer_flops = flops_dict[block_idx]['0']
+                
+                if SHOW_ZC_STAT: print(f'[ZC {block_idx}]={layer_zc}')
+                overall_zc += layer_zc
+        
+        return overall_zc
+
     #########################################################################
     # ZeroDNAS Function
     #########################################################################

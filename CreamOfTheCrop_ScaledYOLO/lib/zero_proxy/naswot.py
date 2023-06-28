@@ -77,6 +77,108 @@ def calculate_wot(model, arch_prob, inputs, targets, opt=None):
     wot_value = ld
     return wot_value
 
+
+PREPROCESSED_BLOCK=False
+BATCH_SIZE=2
+def preprocess_block(model):
+    def forward_hook(module, inp, out):
+        if isinstance(out, tuple):
+            out = out[0]
+        out = out.view(out.size(0), -1)
+        out = out[:BATCH_SIZE]
+        x = (out > 0).float()
+        K = x @ x.t()
+        K2 = (1.-x) @ (1.-x.t())
+        model.K += K.cpu().numpy() + K2.cpu().numpy()
+        # print('[Forward Hook]', type(module), model.K.flatten())
+        
+    def search_forward_hook(module, inp, out):
+        if isinstance(out, tuple):
+            out = out[0]
+        out = out.view(out.size(0), -1)
+        out = out[:BATCH_SIZE]
+        x = (out > 0).float()
+        K = x @ x.t()
+        K2 = (1.-x) @ (1.-x.t())
+        module.tmp_K = K.cpu().numpy() + K2.cpu().numpy()
+        # print('[Forward Hook]',type(module), module.tmp_K.flatten() + model.K.flatten(), out.mean())
+        # print('[Forward Hook]',type(module), end=' ')
+        # for val in (module.tmp_K.flatten() + model.K.flatten()):
+        #     print(val, end=' ')
+        # print(out.mean())
+
+    block_num = len(model.blocks)
+    block_id  = 0
+    first_hook = True
+    white_list = [BottleneckCSP_Search, BottleneckCSP2_Search, Conv, Bottleneck, SPPCSP]
+    for module_idx, (name, module) in enumerate(model.named_modules()):
+        if name == f'blocks.{block_id}':
+            if module.__class__ in white_list:
+                print('register hook', name, str(type(module)))
+                module.visited_backwards = False
+                if 'Search' in module.__class__.__name__:
+                    module.register_forward_hook(search_forward_hook)
+                else:
+                    module.register_forward_hook(forward_hook)
+                    
+            block_id += 1
+
 def calculate_zero_cost_map(model, arch_prob, inputs, targets, opt=None):
-    zc_map = {}
-    return zc_map
+    global PREPROCESSED_BLOCK
+    if not PREPROCESSED_BLOCK: 
+        preprocess_block(model)
+        PREPROCESSED_BLOCK = True
+    model.eval()
+    model.K = 0.0
+    zc_maps = []
+    """
+    x: input image. torch.float32(b, c, h, w)
+    distributions: architecture distributions parameter. torch.float32()
+    """
+    distributions = arch_prob
+    
+    stage_idx = 0
+    x = inputs
+    y, dt = [], []  # outputs
+    for idx, m in enumerate(model.blocks):
+        if m.f != -1:  # if not from previous layer
+            x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
+
+        if 'Search' in m.__class__.__name__:
+            stage_args = distributions[stage_idx]
+            #####################################################
+            zc_map = {}
+            options, search_keys = m.generate_options()
+            for option in options:
+                block_args = {}
+                query_keys = []
+                for key_idx, key in enumerate(search_keys):
+                    option_index = option[key_idx]
+                    option_value = m.search_space[key][option_index]
+                    
+                    # Block Args for search block
+                    # block_args[key] = torch.zeros_like(m.search_space[key])
+                    block_args[key] = torch.zeros((len(m.search_space[key]),))
+                    block_args[key][option_index] = 1.0
+                    
+                    query_keys.append(f'{key}{option_value}')
+                query_key      = '-'.join(query_keys)
+                
+                # Calculate Each Zero-Cost FLOPS
+                _ = m(x, args=block_args)
+                s, ld = np.linalg.slogdet(m.tmp_K)
+                # Note that the negative symbol is to make the wot score larger in negative side
+                zc_map[query_key] = -ld
+                # print(f'{query_key} => {-ld} => ', block_args)
+            # exit()
+            #####################################################
+            
+            zc_maps.append(zc_map)
+            x = m(x, args=stage_args)
+            model.K += m.tmp_K
+            stage_idx+=1
+        else:
+            x = m(x)  # run
+                    
+        y.append(x if m.i in model.save else None)  # save output
+    return zc_maps
