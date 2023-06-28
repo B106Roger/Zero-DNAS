@@ -43,7 +43,15 @@ def train_epoch_zdnas(epoch, model, zc_map, theta_optimizer, cfg, device, task_f
     naive_model  = model.module if is_ddp else model
     search_space = naive_model.search_space
     temperature = nn_model.temperature
-
+    
+    # Average Meter
+    avg_params = AverageMeter()
+    avg_flops  = AverageMeter()
+    avg_floss  = AverageMeter()
+    avg_zcloss = AverageMeter()
+    total      = AverageMeter()
+    
+    
     alpha = 0.03        # for flops_loss
     beta = 0.01         # for params_loss
     gamma = 0.01        # for zero cost loss
@@ -87,17 +95,25 @@ def train_epoch_zdnas(epoch, model, zc_map, theta_optimizer, cfg, device, task_f
         theta_optimizer.step()
         
         
+        # Update Average Meter
+        avg_params.update(output_params.item(), 1)
+        avg_flops.update(output_flops.item(), 1)
+        avg_floss.update(squared_error_flops.item(), 1)
+        avg_zcloss.update(zc_score.item(), 1)
+        total.update(loss.item(), 1)
+        
         # Print
         if local_rank in [-1, 0]:
             ni = iter_idx
             mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
             s = ('%10s' * 2 + '%10.4g' * 6) % (
-                '%3d' % (epoch), mem, output_params.detach().cpu(), output_flops.detach().cpu(), 
-                squared_error_flops.detach().cpu(), zc_score.detach().cpu(), loss.detach().cpu(), temperature)
+                '%3d/%3d' % (epoch,cfg.EPOCHS), mem, avg_params.avg, avg_flops.avg, avg_floss.avg, \
+                    avg_zcloss.avg, total.avg, temperature)
 
             date_time = datetime.now().strftime('%m/%d %I:%M:%S %p') + ' | '
             pbar.set_description(date_time + s)
-                    
+    
+    logger.info(s)
     return nn_model.thetas_main
     
         

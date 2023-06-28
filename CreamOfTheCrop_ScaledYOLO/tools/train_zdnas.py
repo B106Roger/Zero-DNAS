@@ -54,10 +54,11 @@ def config_backup(config_bakup_dir, code_backup_dir, args):
     with open(os.path.join(config_bakup_dir, 'commandline.txt'), 'w') as f:
         f.writelines(' '.join(sys.argv))
         
-    shutil.copy('lib/core/train.py',                     os.path.join(code_backup_dir, 'core_train.py'))
+    shutil.copy('lib/core/zdnas.py',                     os.path.join(code_backup_dir, 'zdnas.py'))
     shutil.copy(f'{__file__}',                           os.path.join(code_backup_dir, os.path.basename(__file__)))
     shutil.copy('lib/models/structures/supernet.py',     os.path.join(code_backup_dir, 'supernet.py'))
     shutil.copy('lib/models/blocks/yolo_blocks.py',      os.path.join(code_backup_dir, 'yolo_blocks.py'))
+    shutil.copy('lib/models/blocks/yolo_blocks_search.py',      os.path.join(code_backup_dir, 'yolo_blocks_search.py'))
     shutil.copy('lib/models/builders/build_supernet.py', os.path.join(code_backup_dir, 'build_supernet.py'))
     
 def parse_config_args(exp_name):
@@ -169,10 +170,6 @@ def main():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    # set search space argument
-    # set_algorithm_type('DNAS')
-    # generate supernet
-    # print('SEARCH_SPACES', SEARCH_SPACES)
     model, sta_num, resolution = gen_supernet(
         model_args,
         num_classes=cfg.DATASET.NUM_CLASSES,
@@ -282,10 +279,19 @@ def main():
         targets  = targets.to(device)
         if iter_idx == 2: break
     
+    ##################################################################
+    ### Choice a Zero-Cost Method
+    ##################################################################    
     from lib.zero_proxy import naswot
+    PROXY_DICT = {
+        'naswot': naswot.calculate_zero_cost_map,
+    }
+    if args.zc not in PROXY_DICT.keys():
+        raise Value(f"key {args.zc} is not registered in PROXY_DICT")
+    wot_function = PROXY_DICT[args.zc]
+    
     arch_prob = model.module.softmax_sampling(temperature) if is_ddp else model.softmax_sampling(temperature)
-    zc_map = naswot.calculate_zero_cost_map(model, arch_prob, imgs, targets, theta_optimizer)
-    print('zc_map', zc_map)
+    zc_map = wot_function(model, arch_prob, imgs, targets, theta_optimizer)
     temp_decay = (cfg.TEMPERATURE.FINAL/cfg.TEMPERATURE.INIT)**(1/40) # 0.9560
     
     try:
