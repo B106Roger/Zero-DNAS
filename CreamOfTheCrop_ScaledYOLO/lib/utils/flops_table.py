@@ -29,7 +29,7 @@ class FlopsEst(object):
         self.flops_fixed = 0
         
         # if Path('flops_dict.json').exists() and Path('params_dict.json').exists():
-        if False:
+        if True:
             self.load_flops_dict()
             self.load_params_dict()
         else:

@@ -144,8 +144,10 @@ class BottleneckCSP_Search(GeneralOpeartor_Search):
         
         # masks = (num_of_mask, max_channel)
         masks = torch.zeros((len(gamma_space), max(channel_values)))
+        # print('[Roger] BottleneckCSP channel_values', channel_values)
         for idx, num_channel in enumerate(channel_values):
             masks[idx, :num_channel] = 1.0
+            # print(f'masks[{idx}, :{num_channel}]', masks[idx].mean())
         self.register_buffer('channel_masks', masks.clone())
             
     def forward(self, x, args=None):
@@ -161,6 +163,7 @@ class BottleneckCSP_Search(GeneralOpeartor_Search):
             if 'gamma' in args.keys() and args['gamma'] is not None:
                 mask = 0.0
                 for i in range(len(self.channel_masks)):
+                    # print('[Roger] BottleneckCSP gamma', self.channel_masks[i].mean())
                     mask += self.channel_masks[i] *  args['gamma'][i]
                 mask = mask.reshape(1,-1,1,1)
         
@@ -226,8 +229,10 @@ class BottleneckCSP2_Search(GeneralOpeartor_Search):
         
         # masks = (num_of_mask, max_channel)
         masks = torch.zeros((len(gamma_space), max(channel_values)))
+        # print('[Roger] BottleneckCSP2 channel_values', channel_values)
         for idx, num_channel in enumerate(channel_values):
             masks[idx, :num_channel] = 1
+            # print(f'masks[{idx}, :{num_channel}]', masks[idx].mean())
         masks = torch.nn.parameter.Parameter(masks, requires_grad=False)
         self.register_buffer('channel_masks', masks.clone())
 
@@ -244,6 +249,7 @@ class BottleneckCSP2_Search(GeneralOpeartor_Search):
             if 'gamma' in args.keys() and args['gamma'] is not None:
                 mask = 0.0
                 for i in range(len(self.channel_masks)):
+                    # print('[Roger] BottleneckCSP2 gamma', self.channel_masks[i].mean())
                     mask += self.channel_masks[i] * args['gamma'][i]
                 mask = mask.reshape(1,-1,1,1)
         

@@ -161,7 +161,10 @@ def calculate_zero_cost_map(model, arch_prob, inputs, targets, opt=None):
                     block_args[key] = torch.zeros((len(m.search_space[key]),))
                     block_args[key][option_index] = 1.0
                     
-                    query_keys.append(f'{key}{option_value}')
+                    if opt == True:
+                        query_keys.append(f'{key[0]}{option_value}')
+                    elif opt is None:
+                        query_keys.append(f'{key}{option_value}')
                 query_key      = '-'.join(query_keys)
                 
                 # Calculate Each Zero-Cost FLOPS

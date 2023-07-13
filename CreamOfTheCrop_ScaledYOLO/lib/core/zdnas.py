@@ -34,7 +34,7 @@ PROXY_DICT = {
 #######################################
 # Search Zero-Cost Aging Evolution
 #######################################
-def train_epoch_zdnas(epoch, model, zc_map, theta_optimizer, cfg, device, task_flops, 
+def train_epoch_zdnas(epoch, model, zc_func, theta_optimizer, cfg, device, task_flops, 
                      est=None, logger=None, local_rank=0, prefix='', logdir='./'):
     batch_size = cfg.DATASET.BATCH_SIZE
     is_ddp = is_parallel(model)
@@ -61,7 +61,10 @@ def train_epoch_zdnas(epoch, model, zc_map, theta_optimizer, cfg, device, task_f
         logger.info(('%10s' * 8) % ('Epoch', 'gpu_num', 'Param', 'FLOPS', 'f_loss', 'zc_loss', 'total', 'temp'))
         pbar = tqdm(range(num_iter), total=num_iter, bar_format='{l_bar}{bar:5}{r_bar}')  # progress bar
     
+    
     for iter_idx in pbar:
+        if iter_idx % 2 == 0: 
+            zc_map = zc_func(model, arch_prob, imgs, targets, theta_optimizer)
         ##########################################################
         # Calculate Basic Information (FLOPS, Params, ZC_Score)
         ##########################################################
@@ -112,7 +115,33 @@ def train_epoch_zdnas(epoch, model, zc_map, theta_optimizer, cfg, device, task_f
 
             date_time = datetime.now().strftime('%m/%d %I:%M:%S %p') + ' | '
             pbar.set_description(date_time + s)
-    
+            
+            ##############################################################
+            # Print Continuous FLOP Value
+            ##############################################################
+            arch_prob = model.module.softmax_sampling(temperature) if is_ddp else model.softmax_sampling(temperature)
+            architecture_info = {
+                'arch_type': 'continuous',
+                'arch': arch_prob
+            }
+            output_flops  = model.calculate_flops_new (architecture_info, model_est.flops_dict) / 1e3
+            output_params = model.calculate_params_new(architecture_info, model_est.params_dict)
+            zc_score = model.calculate_zc(architecture_info, zc_map)
+            print(f'Continuous Current FLOPS: {output_flops:.2f}G   Params: {output_params:.2f}M   ZC: {zc_score}')
+            
+            ##############################################################
+            # Print Discrete FLOP Value
+            ##############################################################
+            arch_prob = model.module.discretize_sampling() if is_ddp else model.discretize_sampling()
+            architecture_info = {
+                'arch_type': 'continuous',
+                'arch': arch_prob
+            }
+            output_flops  = model.calculate_flops_new (architecture_info, model_est.flops_dict) / 1e3
+            output_params = model.calculate_params_new(architecture_info, model_est.params_dict)
+            zc_score = model.calculate_zc(architecture_info, zc_map)
+            print(f'Discrete Current FLOPS: {output_flops:.2f}G   Params: {output_params:.2f}M   ZC: {zc_score}')
+            
     logger.info(s)
     return nn_model.thetas_main
     

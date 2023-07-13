@@ -27,7 +27,7 @@ experiment_graphs = Path('.')
 depth_len=len(depth_search_space)
 gamma_len=len(gamma_search_space)
 
-with imageio.get_writer(thetas_gif_path, mode='I', fps=10) as writer:
+with imageio.get_writer(thetas_gif_path, mode='I', fps=2) as writer:
     with open(thetas_path, 'r') as file:
         fig, axs = plt.subplots(4, 2)
         lines=file.readlines()

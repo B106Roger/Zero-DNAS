@@ -32,7 +32,7 @@ except ImportError:
 
 # import models and training functions
 from lib.utils.flops_table import FlopsEst
-from lib.core.zdnas import train_epoch_zdnas
+from lib.core.zerocost_exp import  *
 from lib.models.structures.supernet import gen_supernet
 from lib.utils.util import convert_lowercase, get_logger, \
     create_optimizer_supernet, create_supernet_scheduler, stringify_theta, write_thetas, export_thetas
@@ -54,13 +54,12 @@ def config_backup(config_bakup_dir, code_backup_dir, args):
     with open(os.path.join(config_bakup_dir, 'commandline.txt'), 'w') as f:
         f.writelines(' '.join(sys.argv))
         
-    shutil.copy('lib/core/zdnas.py',                     os.path.join(code_backup_dir, 'zdnas.py'))
+    shutil.copy('lib/core/train.py',                     os.path.join(code_backup_dir, 'core_train.py'))
     shutil.copy(f'{__file__}',                           os.path.join(code_backup_dir, os.path.basename(__file__)))
     shutil.copy('lib/models/structures/supernet.py',     os.path.join(code_backup_dir, 'supernet.py'))
     shutil.copy('lib/models/blocks/yolo_blocks.py',      os.path.join(code_backup_dir, 'yolo_blocks.py'))
-    shutil.copy('lib/models/blocks/yolo_blocks_search.py',      os.path.join(code_backup_dir, 'yolo_blocks_search.py'))
     shutil.copy('lib/models/builders/build_supernet.py', os.path.join(code_backup_dir, 'build_supernet.py'))
-    
+
 def parse_config_args(exp_name):
     parser = argparse.ArgumentParser(description=exp_name)
     ###################################################################################
@@ -93,7 +92,6 @@ def parse_config_args(exp_name):
 
     
     args = parser.parse_args()
-    print('args', args)
 
     cfg.merge_from_file(args.cfg)
     cfg.exp_name = args.exp_name
@@ -170,6 +168,10 @@ def main():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+    # set search space argument
+    # set_algorithm_type('DNAS')
+    # generate supernet
+    # print('SEARCH_SPACES', SEARCH_SPACES)
     model, sta_num, resolution = gen_supernet(
         model_args,
         num_classes=cfg.DATASET.NUM_CLASSES,
@@ -267,58 +269,20 @@ def main():
 
     ema = ModelEMA(model) if args.local_rank in [-1, 0] else None
 
-    ##################################################################
-    ### 0st. Select Dataset
-    ##################################################################    
-    is_ddp = is_parallel(model)
-    loader = enumerate(dataloader_weight)
-    temperature = model.module.temperature if is_ddp else model.temperature
-    for iter_idx, (uimgs, targets, paths, _) in loader:
-        # imgs = (batch=2, 3, height, width)
-        imgs     = uimgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
-        targets  = targets.to(device)
-        if iter_idx == 2: break
-    
-    ##################################################################
-    ### Choice a Zero-Cost Method
-    ##################################################################    
-    from lib.zero_proxy import naswot
-    PROXY_DICT = {
-        'naswot': naswot.calculate_zero_cost_map,
-    }
-    if args.zc not in PROXY_DICT.keys():
-        raise Value(f"key {args.zc} is not registered in PROXY_DICT")
-    wot_function = PROXY_DICT[args.zc]
-    
-    arch_prob = model.module.softmax_sampling(temperature) if is_ddp else model.softmax_sampling(temperature)
-    zc_map = wot_function(model, arch_prob, imgs, targets, theta_optimizer)
-    temp_decay = (cfg.TEMPERATURE.FINAL/cfg.TEMPERATURE.INIT)**(1/40) # 0.9560
-    
+    # training scheme
+    # FREEZE_EPOCH=40
     try:
         print('task_flops', TASK_FLOPS)
         # Aging Evolution
-        for epoch in range(cfg.EPOCHS):
-            best_arch = train_epoch_zdnas(epoch, model, wot_function, theta_optimizer, cfg, 
-                device=device, task_flops=TASK_FLOPS, est=model_est, logger=logger)
+        test_zc_map_evolve(args.zc, model, dataloader_weight, optimizer, cfg, device=device, task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
+            cycles=1000, est=model_est, logger=logger, output_dir=output_dir)
+        # Export Model Config
+        # for topk, arch_info in enumerate(best_archs):
+        #     filename = os.path.join(model_dir, f'{args.zc}-Top{topk+1}_f{TASK_FLOPS}.yaml')
+        #     export_thetas(arch_info['arch'], model, model.model_args, filename)
             
-            ##############################################################
-            # Reduce & Save Architecture Temperature
-            ##############################################################
-            print('Decreasing temperature!')
-            if is_parallel(model):
-                model.module.temperature = model.module.temperature * temp_decay #* np.exp(-0.065)
-            else:
-                model.temperature = model.temperature * temp_decay #* np.exp(-0.065)
-            
-            ##############################################################
-            # 
-            ##############################################################
-            with open(os.path.join(output_dir, 'thetas.txt'), 'a') as f:
-                arch_str=str(stringify_theta(arch_prob, normalize=True, temperature=model.temperature))
-                f.write(f'Epoch {epoch}' + arch_str +'\n')
-            
-        filename = os.path.join(model_dir, f'{args.zc}-best_f{TASK_FLOPS}.yaml')
-        export_thetas(arch_prob, model, model.model_args, filename)
+        # filename = os.path.join(model_dir, f'{args.zc}-best_f{TASK_FLOPS}.yaml')
+        # export_thetas(historical_best['arch'], model, model.model_args, filename)
     except KeyboardInterrupt:
         pass
 
