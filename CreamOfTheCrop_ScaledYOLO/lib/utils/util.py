@@ -16,6 +16,8 @@ from torch import optim as optim
 from thop import profile, clever_format
 
 from timm.utils import *
+from lib.models.blocks.yolo_blocks_search import *
+from lib.models.blocks.yolo_blocks import *
 
 from lib.config import cfg
 from lib.utils.general import non_max_suppression, clip_coords, xywh2xyxy, box_iou, ap_per_class
@@ -191,6 +193,7 @@ def create_optimizer_supernet(args, model, has_apex, filter_bias_and_bn=True):
     thetas_weight_decay = args.theta_optimizer.WEIGHT_DECAY
     # thetas_params = model.thetas_main.parameters()
     thetas_params = model.get_optimizer_parameter()
+    print('thetas_params', thetas_params)
     
     # print(args)
 
@@ -320,33 +323,50 @@ def thetas_to_archtecture(thetas, model):
     theta_idx = 0
     for depth, m in enumerate(model.blocks):
         if 'Search' in m.__class__.__name__:
-            if 'Composite_Search' in m.__class__.__name__:
+            if m.__class__ in [Composite_Search]:
                 best_option_idx = thetas[theta_idx]['operator_choice'].argmax().cpu().numpy()
                 export_thetas[theta_idx] = thetas[theta_idx]['operators'][best_option_idx]
                 ##############################################
                 m = m.operators[best_option_idx]
-                if 'Search' in m.__class__.__name__:
+                if m.__class__ in [BottleneckCSP, BottleneckCSP2, ELAN_Search, ELAN2_Search]:
                     search_space = m.search_space
                     for key in search_space.keys():
                         best_option_idx = thetas[theta_idx][key].argmax().cpu().numpy()
                         export_thetas[theta_idx][key] = search_space[key][best_option_idx]
-            else:
+            elif m.__class__ in [BottleneckCSP_Search, BottleneckCSP2_Search]:
                 search_space = m.search_space
                 for key in search_space.keys():
                     best_option_idx = thetas[theta_idx][key].argmax().cpu().numpy()
                     export_thetas[theta_idx][key] = search_space[key][best_option_idx]
+            elif m.__class__ in [ELAN_Search, ELAN2_Search]:
+                search_space = m.search_space
+                for key in search_space.keys():
+                    if key == 'connection':
+                        con_len = len(search_space['connection'])
+                        best_con_idx = torch.arange(con_len)[thetas[theta_idx][key] > 0.5].numpy().tolist()
+                        best_con = np.array(search_space['connection'])[best_con_idx].tolist()
+                        export_thetas[theta_idx][key] = best_con
+                    else:
+                        best_option_idx = thetas[theta_idx][key].argmax().cpu().numpy()
+                        export_thetas[theta_idx][key] = search_space[key][best_option_idx]
+                    
             theta_idx += 1
     return export_thetas
 
 def export_thetas(thetas, model, origin_config, output_file):
+    """
+    thetas: only accept normalized thetas, or the program would go wrong 
+    """
     export_config = copy.deepcopy(origin_config)
     discrete_thetas = thetas_to_archtecture(thetas, model)
+    # Config For ScaledYOLOv4
     gamma_list = []
     theta_idx = 0
     for part in ['backbone', 'head']:
         for depth in range(len(export_config[part])):
             f,n,m,arg = export_config[part][depth]
-            if 'Search' in m:
+            m = eval(m)
+            if m in [BottleneckCSP_Search, BottleneckCSP2_Search]:
                 # Process Block Name
                 export_config[part][depth][2] = export_config[part][depth][2].replace('_Search','')
                 # Process Block Depth
@@ -356,8 +376,24 @@ def export_thetas(thetas, model, origin_config, output_file):
                 if 'gamma' in discrete_thetas[theta_idx].keys():
                     gamma_list.append(discrete_thetas[theta_idx]['gamma'])
                 theta_idx += 1
-
-            if 'Detect' in m:
+            
+            if m in [ELAN_Search, ELAN2_Search]:
+                # Process Block Name
+                export_config[part][depth][2] = export_config[part][depth][2].replace('_Search','')
+                # Process Block Depth
+                if 'connection' in discrete_thetas[theta_idx].keys():
+                    n_val = min(discrete_thetas[theta_idx]['connection'])
+                    discrete_thetas[theta_idx]['connection'].extend([n_val-1, n_val-2])
+                    export_config[part][depth][3].append(discrete_thetas[theta_idx]['connection'])
+                    export_config[part][depth][3].append(-n_val + 2)
+                # Process Block Gamma
+                if 'gamma' in discrete_thetas[theta_idx].keys():
+                    gamma_list.append(discrete_thetas[theta_idx]['gamma'])
+                    base_cn = export_config[part][depth][3][1]
+                    export_config[part][depth][3][1] = int(discrete_thetas[theta_idx]['gamma'] * base_cn)
+                theta_idx += 1
+                
+            if m.__class__ in [Detect, IDetect]:
                 arg.pop()
     
     export_config['csp_gammas'] = gamma_list

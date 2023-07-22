@@ -40,7 +40,8 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             #################################
             # Specific Args PreProcessing
             #################################
-            if m in [nn.Conv2d, Conv, Bottleneck, SPP, DWConv, MixConv2d, Focus, CrossConv, BottleneckCSP, BottleneckCSP2, SPPCSP, VoVCSP, C3]:
+            if m in [nn.Conv2d, Conv, Bottleneck, SPP, DWConv, MixConv2d, Focus, CrossConv, BottleneckCSP, BottleneckCSP2, SPPCSP, VoVCSP, C3, \
+                RepConv, ELAN, ELAN2, SPPCSPC]:
                 
                 c1, c2 = ch[f], args[0]
                 
@@ -83,12 +84,10 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
                 args = [ch[f]]
                 c1 = c2 = ch[f]
             elif m is Concat:
-                c1 = [ch[-1 if x == -1 else x + 1] for x in f]
+                c1 = [ch[x] for x in f]
                 c2 = sum(c1)
-            elif m is Detect:
-                c1 = [ch[x + 1] for x in f]
-                c2 = None
-                args.append([ch[x + 1] for x in f])
+            elif m in [Detect, IDetect]:
+                args.append([ch[x] for x in f])
                 if isinstance(args[1], int):  # number of anchors
                     args[1] = [list(range(args[1] * 2))] * len(f)
             elif m is nn.Upsample or m is Upsample:
@@ -106,8 +105,19 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
                     args = [c1, c2, gamma_space, bottleneck_space]
                 else:
                     args = [c1, c2, *args[1:]]
+                    
+            elif m in [ELAN_Search, ELAN2_Search]:
+                c1, c2, cn = ch[f], args[0], args[1]
+                if len(args) == 2:
+                    gamma_space      = d['search_space'][m.__name__]['gamma_space']
+                    connection_space = d['search_space'][m.__name__]['connection_space']
+                    args = [c1, c2, cn, connection_space, gamma_space]
+                else:
+                    args = [c1, c2, cn, *args[2:]]
+                    
             elif m is Composite_Search:
                 pass
+                raise ValueError(f"Not Implement Block {str(Composite_Search)}")
             ####################################################################
             
             else:
@@ -127,6 +137,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             print('%3s%18s%3s%10.0f  %-40s%-30s' % (i, f, n, np, t, args))  # print
             save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)  # append to savelist
             layers.append(m_)
+            if i == 0: ch = []
             if m in [HarDBlock, HarDBlock2]:
                 c2 = m_.get_out_ch()
                 ch.append(c2)

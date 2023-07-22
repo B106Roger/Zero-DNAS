@@ -61,10 +61,14 @@ def train_epoch_zdnas(epoch, model, zc_func, theta_optimizer, cfg, device, task_
         logger.info(('%10s' * 8) % ('Epoch', 'gpu_num', 'Param', 'FLOPS', 'f_loss', 'zc_loss', 'total', 'temp'))
         pbar = tqdm(range(num_iter), total=num_iter, bar_format='{l_bar}{bar:5}{r_bar}')  # progress bar
     
-    
+    f=open(os.path.join(logdir, 'train.txt'), 'a')
     for iter_idx in pbar:
-        if iter_idx % 2 == 0: 
-            zc_map = zc_func(model, arch_prob, imgs, targets, theta_optimizer)
+        if iter_idx % 50 == 0: 
+            arch_prob = model.module.softmax_sampling(temperature, detach=True) if is_ddp else model.softmax_sampling(temperature, detach=True)
+            zc_map = zc_func(arch_prob)
+            f.write(f'[{epoch}-{iter_idx:04d}] {str(arch_prob)}\n')
+            f.write(f'[{epoch}-{iter_idx:04d}] {str(zc_map)}\n')
+            
         ##########################################################
         # Calculate Basic Information (FLOPS, Params, ZC_Score)
         ##########################################################
@@ -73,7 +77,7 @@ def train_epoch_zdnas(epoch, model, zc_func, theta_optimizer, cfg, device, task_
             'arch_type': 'continuous',
             'arch': gumbel_prob
         }
-                
+         
         zc_score = nn_model.calculate_zc(architecture_info, zc_map)
         output_flops  = nn_model.calculate_flops_new (architecture_info, est.flops_dict) / 1e3
         output_params = nn_model.calculate_params_new(architecture_info, est.params_dict)
@@ -116,31 +120,31 @@ def train_epoch_zdnas(epoch, model, zc_func, theta_optimizer, cfg, device, task_
             date_time = datetime.now().strftime('%m/%d %I:%M:%S %p') + ' | '
             pbar.set_description(date_time + s)
             
-            ##############################################################
-            # Print Continuous FLOP Value
-            ##############################################################
-            arch_prob = model.module.softmax_sampling(temperature) if is_ddp else model.softmax_sampling(temperature)
-            architecture_info = {
-                'arch_type': 'continuous',
-                'arch': arch_prob
-            }
-            output_flops  = model.calculate_flops_new (architecture_info, model_est.flops_dict) / 1e3
-            output_params = model.calculate_params_new(architecture_info, model_est.params_dict)
-            zc_score = model.calculate_zc(architecture_info, zc_map)
-            print(f'Continuous Current FLOPS: {output_flops:.2f}G   Params: {output_params:.2f}M   ZC: {zc_score}')
-            
-            ##############################################################
-            # Print Discrete FLOP Value
-            ##############################################################
-            arch_prob = model.module.discretize_sampling() if is_ddp else model.discretize_sampling()
-            architecture_info = {
-                'arch_type': 'continuous',
-                'arch': arch_prob
-            }
-            output_flops  = model.calculate_flops_new (architecture_info, model_est.flops_dict) / 1e3
-            output_params = model.calculate_params_new(architecture_info, model_est.params_dict)
-            zc_score = model.calculate_zc(architecture_info, zc_map)
-            print(f'Discrete Current FLOPS: {output_flops:.2f}G   Params: {output_params:.2f}M   ZC: {zc_score}')
+    ##############################################################
+    # Print Continuous FLOP Value
+    ##############################################################
+    arch_prob = model.module.softmax_sampling(temperature) if is_ddp else model.softmax_sampling(temperature)
+    architecture_info = {
+        'arch_type': 'continuous',
+        'arch': arch_prob
+    }
+    output_flops  = model.calculate_flops_new (architecture_info, est.flops_dict) / 1e3
+    output_params = model.calculate_params_new(architecture_info, est.params_dict)
+    zc_score = model.calculate_zc(architecture_info, zc_map)
+    print(f'Continuous Current FLOPS: {output_flops:.2f}G   Params: {output_params:.2f}M   ZC: {zc_score}')
+    
+    ##############################################################
+    # Print Discrete FLOP Value
+    ##############################################################
+    arch_prob = model.module.discretize_sampling() if is_ddp else model.discretize_sampling()
+    architecture_info = {
+        'arch_type': 'continuous',
+        'arch': arch_prob
+    }
+    output_flops  = model.calculate_flops_new (architecture_info, est.flops_dict) / 1e3
+    output_params = model.calculate_params_new(architecture_info, est.params_dict)
+    zc_score = model.calculate_zc(architecture_info, zc_map)
+    print(f'Discrete Current FLOPS: {output_flops:.2f}G   Params: {output_params:.2f}M   ZC: {zc_score}')
             
     logger.info(s)
     return nn_model.thetas_main

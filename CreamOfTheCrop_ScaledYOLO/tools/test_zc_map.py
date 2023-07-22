@@ -73,6 +73,7 @@ def parse_config_args(exp_name):
     parser.add_argument('--nas', default='', type=str, help='NAS-Search-Space and hardware constraint combination')
     parser.add_argument('--zc',  default='', type=str, help='Zero Cost Metrics Type')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--exp_type', default=1, type=int, help='1=>test_zc_map | 2=>test_zc_evolve | 3=>test_zc_params')
     ###################################################################################
     
     
@@ -274,7 +275,7 @@ def main():
     try:
         print('task_flops', TASK_FLOPS)
         # Aging Evolution
-        test_zc_map_evolve(args.zc, model, dataloader_weight, optimizer, cfg, device=device, task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
+        test_zc_map_param(args.zc, model, dataloader_weight, optimizer, cfg, device=device, task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
             cycles=1000, est=model_est, logger=logger, output_dir=output_dir)
         # Export Model Config
         # for topk, arch_info in enumerate(best_archs):

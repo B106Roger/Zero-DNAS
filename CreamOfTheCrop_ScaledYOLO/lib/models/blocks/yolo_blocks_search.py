@@ -4,7 +4,10 @@ import torch
 import copy
 import torch.nn as nn
 from mish_cuda import MishCuda as Mish
+import numpy as np
 # from torch.nn import ReLU as Mish
+# from torch.nn import LeakyReLU as Mish
+
 from lib.utils.synflow import synflow, sum_arr
 from lib.models.blocks.yolo_blocks import Conv, Bottleneck
 
@@ -329,4 +332,220 @@ class Composite_Search(GeneralOpeartor_Search):
         
         length = len(self.operators)
         arch['operators_choice'] = torch.nn.Parameter(torch.ones((length,)) / length)
+        return arch
+
+
+#############################################################
+# YOLOv7 Operator
+#############################################################
+
+class ELAN_Search(GeneralOpeartor_Search):
+    # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
+    def __init__(self, c1, c2, cn, connection_space, gamma_space):  # ch_in, ch_out, number, shortcut, groups, expansion
+        """
+        connection_space:
+            [-1,-2,-3,-4]
+        gamma_space
+        """
+        super(ELAN_Search, self).__init__()
+        self.search_space['gamma']         = copy.deepcopy(gamma_space)
+        self.search_space['connection']    = copy.deepcopy(connection_space)
+        self.base_cn = cn
+        connection    =  -np.min(connection_space)
+        cn            =   (np.max(gamma_space) * self.base_cn).astype(np.int32)
+        
+        c_ = (len(connection_space) + 2) * cn
+        n  = len(connection_space)
+        # print(c2, cn, connection_space, n)
+
+        self.cv1 = Conv(c1, cn, 1, 1)
+        self.cv2 = Conv(c1, cn, 1, 1)
+        self.cv3 = Conv(c_, c2, 1, 1)
+        self.m = nn.Sequential(*[Conv(cn, cn, 3, 1) for _ in range(n)])
+        
+        self.block_name = f'{self.__class__.__name__}_n{n}g{cn}'
+        
+        channel_values = (np.array(gamma_space) * self.base_cn).astype(np.int32)
+        # masks = (num_of_mask, max_channel)
+        masks = torch.zeros((len(gamma_space), max(channel_values)))
+        for idx, num_channel in enumerate(channel_values):
+            masks[idx, :num_channel] = 1.0
+        self.register_buffer('channel_masks', masks.clone())
+
+    def forward(self, x, args=None):
+        """
+        gamma: [0.3333, 0.3333, 0.3333]
+        connection: [1.0, 0.0, 1.0, 0.0, 1.0, 1.0]
+        """
+        mask = 1.0
+        n_connection_list = torch.ones((len(self.m), ))
+        if args is not None:
+            if 'gamma' in args.keys():
+                mask = 0.0
+                for i in range(len(self.channel_masks)):
+                    mask += self.channel_masks[i] *  args['gamma'][i]
+                mask = mask.reshape(1,-1,1,1)
+            if 'connection' in args.keys():
+                n_connection_list = torch.flip(args['connection'], dims=(0,))
+        
+        y1 = self.cv1(x) * mask
+        y2 = self.cv2(x) * mask
+        out = y2
+
+        feat_list = [y1, y2]
+        for idx, m in enumerate(self.m):
+            out = m(out) * mask 
+            feat_list.append(out * n_connection_list[idx])
+
+        return self.cv3(torch.cat(feat_list, dim=1))
+
+    def _connection_combination(self, connection, index=False):
+        """
+        generate the Combination of connection by index
+        connection=[-1,-2,-3]
+        self._connection_combination() -> [
+            (), 
+            (0), (1), (2), 
+            (0,1), (1,2), (0,2),
+            (0,1,2)
+        ]
+        """
+        results = []
+        for L in range(len(connection) + 1):
+            target = list(range(len(connection))) if index else connection 
+            for subset in itertools.combinations(target, L):
+                results.append(list(subset))
+        return results
+
+    def generate_options(self):
+        """
+        for option in results:
+            for key in keys:
+                index = option[keys.index(key)]
+                value = self.search_space[key][index]
+        """
+        keys = list(sorted(self.search_space.keys()))
+        iter_object = []
+        for key in keys:
+            if key == 'gamma':
+                search_space_idx = list(range(len(self.search_space[key])))
+                iter_object.append(search_space_idx)
+            elif key == 'connection':
+                comb_space_idx = list(range(len(self._connection_combination(self.search_space[key]))))
+                iter_object.append(comb_space_idx)
+        results = list(itertools.product(*iter_object))
+        
+        return results, keys
+
+    def init_arch_parameter(self, device='cpu'):
+        arch = super(ELAN_Search, self).init_arch_parameter()
+        for key, candidates in self.search_space.items():
+            length    = len(candidates)
+            arch[key] = torch.nn.Parameter(torch.ones((length, ))).to(device)
+        return arch
+
+
+class ELAN2_Search(GeneralOpeartor_Search):
+    # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
+    def __init__(self, c1, c2, cn, connection_space, gamma_space):  # ch_in, ch_out, number, shortcut, groups, expansion
+        super(ELAN2_Search, self).__init__()
+        self.search_space['gamma']         = copy.deepcopy(gamma_space)
+        self.search_space['connection']    = copy.deepcopy(connection_space)
+        self.base_cn = cn        
+        connection    =  -np.min(connection_space)
+        cn            =   (np.max(gamma_space) * self.base_cn).astype(np.int32)
+        
+        c_ = (len(connection_space) + 4) * cn
+        n  = len(connection_space)
+        # print(c2, cn, connection_space, n)
+
+        self.cv1 = Conv(c1, cn*2, 1, 1)
+        self.cv2 = Conv(c1, cn*2, 1, 1)
+        self.m = nn.Sequential(*[Conv(cn, cn, 3, 1) if _!=0 else Conv(cn*2, cn, 3, 1)for _ in range(n)])
+        self.cv3 = Conv(c_, c2, 1, 1)
+        self.block_name = f'{self.__class__.__name__}_n{n}g{cn}'
+        
+        channel_values = (np.array(gamma_space) * self.base_cn).astype(np.int32)
+        # masks = (num_of_mask, max_channel)
+        masks1 = torch.zeros((len(gamma_space), max(channel_values)))
+        masks2 = torch.zeros((len(gamma_space), max(channel_values) * 2))
+        for idx, num_channel in enumerate(channel_values):
+            masks1[idx, :num_channel]     = 1.0
+            masks2[idx, :(num_channel*2)] = 1.0
+        self.register_buffer('channel_masks1', masks1.clone())
+        self.register_buffer('channel_masks2', masks2.clone())
+
+    def forward(self, x, args=None):
+        mask1 = 1.0
+        mask2 = 1.0
+        n_connection_list = torch.ones((len(self.m),))
+        if args is not None:
+            if 'gamma' in args.keys():
+                mask1 = 0.0
+                mask2 = 1.0
+                for i in range(len(self.channel_masks1)):
+                    mask1 += self.channel_masks1[i] *  args['gamma'][i]
+                    mask2 += self.channel_masks2[i] *  args['gamma'][i]
+
+                mask1 = mask1.reshape(1,-1,1,1)
+                mask2 = mask2.reshape(1,-1,1,1)
+                
+            if 'connection' in args.keys():
+                n_connection_list = torch.flip(args['connection'], dims=(0,))
+            
+        y1 = self.cv1(x) * mask2
+        y2 = self.cv2(x) * mask2
+        out = y2
+
+        feat_list = [y1, y2]
+        for idx, m in enumerate(self.m):
+            out = m(out) * mask1 
+            feat_list.append(out * n_connection_list[idx])
+
+        return self.cv3(torch.cat(feat_list, dim=1))
+
+    def _connection_combination(self, connection, index=False):
+        """
+        generate the Combination of connection by index
+        connection=[-1,-2,-3]
+        self._connection_combination() -> [
+            (), 
+            (0), (1), (2), 
+            (0,1), (1,2), (0,2),
+            (0,1,2)
+        ]
+        """
+        results = []
+        for L in range(len(connection) + 1):
+            target = list(range(len(connection))) if index else connection 
+            for subset in itertools.combinations(target, L):
+                results.append(list(subset))
+        return results
+
+
+    def generate_options(self):
+        """
+        for option in results:
+            for key in keys:
+                index = option[keys.index(key)]
+                value = self.search_space[key][index]
+        """
+        keys = list(sorted(self.search_space.keys()))
+        iter_object = []
+        for key in keys:
+            if key == 'gamma':
+                search_space_idx = list(range(len(self.search_space[key])))
+                iter_object.append(search_space_idx)
+            elif key == 'connection':
+                comb_space_idx = list(range(len(self._connection_combination(self.search_space[key]))))
+                iter_object.append(comb_space_idx)
+        results = list(itertools.product(*iter_object))
+        
+        return results, keys
+
+    def init_arch_parameter(self, device='cpu'):
+        arch = super(ELAN2_Search, self).init_arch_parameter()
+        for key, candidates in self.search_space.items():
+            length    = len(candidates)
+            arch[key] = torch.nn.Parameter(torch.ones((length, ))).to(device)
         return arch

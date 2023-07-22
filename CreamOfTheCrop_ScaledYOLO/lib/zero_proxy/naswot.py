@@ -110,7 +110,7 @@ def preprocess_block(model):
     block_num = len(model.blocks)
     block_id  = 0
     first_hook = True
-    white_list = [BottleneckCSP_Search, BottleneckCSP2_Search, Conv, Bottleneck, SPPCSP]
+    white_list = [BottleneckCSP_Search, BottleneckCSP2_Search, Conv, Bottleneck, SPPCSP, ELAN_Search,ELAN2_Search]
     for module_idx, (name, module) in enumerate(model.named_modules()):
         if name == f'blocks.{block_id}':
             if module.__class__ in white_list:
@@ -144,7 +144,7 @@ def calculate_zero_cost_map(model, arch_prob, inputs, targets, opt=None):
         if m.f != -1:  # if not from previous layer
             x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
 
-        if 'Search' in m.__class__.__name__:
+        if   m.__class__ in [BottleneckCSP_Search, BottleneckCSP2_Search]:
             stage_args = distributions[stage_idx]
             #####################################################
             zc_map = {}
@@ -157,7 +157,6 @@ def calculate_zero_cost_map(model, arch_prob, inputs, targets, opt=None):
                     option_value = m.search_space[key][option_index]
                     
                     # Block Args for search block
-                    # block_args[key] = torch.zeros_like(m.search_space[key])
                     block_args[key] = torch.zeros((len(m.search_space[key]),))
                     block_args[key][option_index] = 1.0
                     
@@ -172,14 +171,49 @@ def calculate_zero_cost_map(model, arch_prob, inputs, targets, opt=None):
                 s, ld = np.linalg.slogdet(m.tmp_K)
                 # Note that the negative symbol is to make the wot score larger in negative side
                 zc_map[query_key] = -ld
-                # print(f'{query_key} => {-ld} => ', block_args)
-            # exit()
             #####################################################
             
             zc_maps.append(zc_map)
             x = m(x, args=stage_args)
             model.K += m.tmp_K
             stage_idx+=1
+        elif m.__class__ in [ELAN_Search, ELAN2_Search]:
+            stage_args = distributions[stage_idx]
+            #####################################################
+            zc_map = {}
+            options, search_keys = m.generate_options()
+            
+            comb_list       = m._connection_combination(m.search_space['connection'])
+            comb_list_index = m._connection_combination(m.search_space['connection'], index=True)
+            for option in options:
+                block_args = {}
+                query_keys = []
+                
+                args_cn             = int(m.search_space['gamma'     ][option[search_keys.index('gamma')]] * m.base_cn)
+                args_connection     = comb_list[option[search_keys.index('connection')]]
+                args_connection_idx = comb_list_index[option[search_keys.index('connection')]]
+                
+                block_args['connection'] = torch.zeros((len(m.search_space['connection']),))
+                
+                for connection_idx in args_connection_idx:
+                    block_args['connection'][connection_idx] = 1.
+                
+                block_args['gamma'] = torch.zeros((len(m.search_space['gamma']),))
+                block_args['gamma'][option[search_keys.index('gamma')]] = 1.0
+
+                query_key = f'cn{args_cn}-con{str(args_connection)}'
+                # Calculate Each Zero-Cost FLOPS
+                _ = m(x, args=block_args)
+                s, ld = np.linalg.slogdet(m.tmp_K)
+                # Note that the negative symbol is to make the wot score larger in negative side
+                zc_map[query_key] = -ld
+            #####################################################
+            
+            zc_maps.append(zc_map)
+            x = m(x, args=stage_args)
+            model.K += m.tmp_K
+            stage_idx+=1
+        
         else:
             x = m(x)  # run
                     

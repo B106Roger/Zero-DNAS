@@ -1,6 +1,6 @@
 import sys
 from functools import partial
-from lib.models.blocks.yolo_blocks import Detect
+from lib.models.blocks.yolo_blocks import Detect, IDetect
 
 import numpy as np
 import torch
@@ -27,7 +27,7 @@ def get_model_complexity_info(model, input_res,
         input = input_constructor(input_res)
         _ = flops_model(**input)
     else:
-        if isinstance(flops_model, Detect):
+        if flops_model.__class__ in [Detect, IDetect]:
                 batch = list(map(
                     lambda x: torch.ones(x, dtype=next(flops_model.parameters()).dtype,
                                              device=next(flops_model.parameters()).device), input_res))
@@ -55,7 +55,8 @@ def get_model_complexity_info(model, input_res,
         return flops_to_string(flops_count), params_to_string(params_count)
     model.cpu()
     try:
-        print(f'{model.get_block_name()} - {flops_count / 1e6} MFLOPs - {params_count / 1e6} M Parameters')
+        # print(f'{model.get_block_name()} - {flops_count / 1e6} MFLOPs - {params_count / 1e6} M Parameters')
+        pass
     except:
         pass
     return flops_count, params_count, next_spatial_dimension

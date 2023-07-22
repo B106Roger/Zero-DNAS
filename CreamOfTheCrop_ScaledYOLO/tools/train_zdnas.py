@@ -106,6 +106,7 @@ task_dict = {
     'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': None, },
     'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': None, },
     
+    'DNAS-105':     { 'GFLOPS': 105,  'PARAMS': None, },
     'DNAS-70':     { 'GFLOPS': 70,  'PARAMS': None, },
     'DNAS-60':     { 'GFLOPS': 60,  'PARAMS': None, },
     'DNAS-50':     { 'GFLOPS': 50,  'PARAMS': None, },
@@ -277,29 +278,33 @@ def main():
         # imgs = (batch=2, 3, height, width)
         imgs     = uimgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
         targets  = targets.to(device)
+        
+        imgs=imgs[:2]
         if iter_idx == 2: break
     
+    temp_decay = (cfg.TEMPERATURE.FINAL/cfg.TEMPERATURE.INIT)**(1/40) # 0.9560
     ##################################################################
     ### Choice a Zero-Cost Method
     ##################################################################    
     from lib.zero_proxy import naswot
     PROXY_DICT = {
-        'naswot': naswot.calculate_zero_cost_map,
+        'naswot': lambda x: naswot.calculate_zero_cost_map(model, x, imgs, targets, None),
     }
     if args.zc not in PROXY_DICT.keys():
         raise Value(f"key {args.zc} is not registered in PROXY_DICT")
     wot_function = PROXY_DICT[args.zc]
+
+    test_prob = model.gumbel_sampling(temperature=0.1, detach=True)
+    export_thetas(test_prob, model, model.model_args, "test_config.yaml")
+
     
-    arch_prob = model.module.softmax_sampling(temperature) if is_ddp else model.softmax_sampling(temperature)
-    zc_map = wot_function(model, arch_prob, imgs, targets, theta_optimizer)
-    temp_decay = (cfg.TEMPERATURE.FINAL/cfg.TEMPERATURE.INIT)**(1/40) # 0.9560
-    
+    torch.save(model.state_dict(),     os.path.join(output_dir, f'model_init_weights.pt'))
     try:
         print('task_flops', TASK_FLOPS)
         # Aging Evolution
         for epoch in range(cfg.EPOCHS):
             best_arch = train_epoch_zdnas(epoch, model, wot_function, theta_optimizer, cfg, 
-                device=device, task_flops=TASK_FLOPS, est=model_est, logger=logger)
+                device=device, task_flops=TASK_FLOPS, est=model_est, logger=logger, logdir=output_dir)
             
             ##############################################################
             # Reduce & Save Architecture Temperature
@@ -313,11 +318,13 @@ def main():
             ##############################################################
             # 
             ##############################################################
+            arch_prob = model.module.softmax_sampling() if is_ddp else model.softmax_sampling()
             with open(os.path.join(output_dir, 'thetas.txt'), 'a') as f:
                 arch_str=str(stringify_theta(arch_prob, normalize=True, temperature=model.temperature))
                 f.write(f'Epoch {epoch}' + arch_str +'\n')
             
         filename = os.path.join(model_dir, f'{args.zc}-best_f{TASK_FLOPS}.yaml')
+        arch_prob = model.module.softmax_sampling(temperature, detach=True) if is_ddp else model.softmax_sampling(temperature, detach=True)
         export_thetas(arch_prob, model, model.model_args, filename)
     except KeyboardInterrupt:
         pass

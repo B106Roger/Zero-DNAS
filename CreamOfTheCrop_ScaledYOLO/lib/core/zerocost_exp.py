@@ -20,7 +20,7 @@ from lib.utils.general import compute_loss, test, plot_images, is_parallel, buil
 from lib.utils.kd_utils import compute_loss_KD
 from lib.utils.synflow import sum_arr_tensor
 from lib.zero_proxy import snip, synflow, naswot, grasp
-import imageio
+import imageio, cv2
 
 import  matplotlib.pyplot as plt
 
@@ -340,6 +340,103 @@ def analyze_map_func(arch_info1, arch_info2, title, img_filename, text_filename)
     f.close()
     return fig
 
+def analyze_map_func2(arch_info_list, title, img_filename, text_filename):
+    # zc_maps1 = arch_info1['naswot_map']
+    # zc_maps2 = arch_info2['naswot_map']
+    # arch1    = arch_info1['arch']
+    # arch2    = arch_info2['arch']
+    
+    fig, axes = plt.subplots(len(arch_info_list[0]))
+    fig.suptitle(title)
+    f = open(text_filename, 'w')
+    for stage_id in range(len(arch_info_list[0])):
+        score_list = []
+        rank_list = []
+        
+        keys = arch_info_list[0]['naswot_map'][stage_id].keys()
+        f.write(f'{"":22s}')
+        for key in keys: f.write(f'{key:>15s}')
+        f.write('\n')
+        
+        for arch_id, arch_info in enumerate(arch_info_list):
+            zc_map = arch_info['naswot_map'][stage_id]
+
+            tmp_str = f"arch{arch_id:02d} wot score"
+            f.write(f'{tmp_str:>20s}{stage_id:2d}')
+            for key in keys: f.write(f'{zc_map[key]:15.10f}')
+            f.write('\n')
+
+        for arch_id, arch_info in enumerate(arch_info_list):
+            zc_map = arch_info['naswot_map'][stage_id]
+            score  = np.array([zc_map[key] for key in keys])
+            rank   = (-score ).argsort()[::-1]
+        
+            tmp_str = f"arch{arch_id:02d} wot rank"
+            f.write(f'{tmp_str:>20s}{stage_id:2d}')
+            for val in rank: f.write(f'{val:15d}')
+            f.write('\n')
+            
+            score_list.append(score)
+            rank_list.append(rank)
+    
+        for arch_id, arch_info in enumerate(arch_info_list):
+            # rank_diff  = np.abs(rank1-rank2).sum()
+            # score_diff = np.sum([v for v in zc_map1.values()]) - np.sum([v for v in zc_map2.values()])
+            # f.write(f'Rank Difference {rank_diff}     Score Difference {score_diff}\n')
+            f.write(f"Arch{arch_id:02d} FLOPS={arch_info['flops']:5.2f}G Param={arch_info['params']:5.2f}M  wot={arch_info['naswot']}\n")
+        
+        for arch_id, arch_info in enumerate(arch_info_list):
+            f.write(f'Arch{arch_id:02d} {str(arch_info["arch"])}\n')
+        
+
+        candidiate_num  = len(rank)
+        comp_list  = score_list
+        color_list = ['r', 'g', 'b', 'c', 'k', 'm']
+        arch_list  = [arch_info['arch'] for arch_info in arch_info_list]
+        x = np.arange(candidiate_num) * 0.8
+        
+        with_val = 0.1
+        for i, score_arr in enumerate(comp_list):
+            axes[stage_id].bar(x - with_val* (i-len(comp_list)/2), height=score_arr, width=with_val, color=[color_list[i]]*candidiate_num, align='edge')
+        #######################################
+        # Basic Math Information
+        #######################################
+        margin = 0.2
+        all_scores = np.concatenate(comp_list)
+        center  = all_scores.mean()
+        min_val = all_scores.min() - 0.05
+        max_val = all_scores.max() + 0.05
+        
+        #######################################
+        # Set Plot Style
+        #######################################
+        axes[stage_id].set_ylim([min_val, max_val])
+        axes[stage_id].set_xticks(x, list(keys))
+        axes[stage_id].set_ylabel(f'Depth={stage_id}')
+        axes[stage_id].legend([f'Arch{stage}' for stage in range(len(comp_list))], labelcolor=color_list)
+        
+        for ii in range(3,11,4): axes[stage_id].axvline((ii+0.5)*0.8, color='black')
+        arr_size  = (max_val-min_val)*with_val
+        
+        # Arrow Plot
+        for ii, (arch, color) in enumerate(zip(arch_list,color_list)):
+            loc_idx = arch[stage_id]['gamma'].argmax().numpy() * 4 + arch[stage_id]['n_bottlenecks'].argmax().numpy()
+            loc = x[loc_idx] - with_val * (ii-len(comp_list)/2) + with_val
+            axes[stage_id].arrow(loc, min_val+arr_size, 0, -arr_size*0.6666, 
+                                 head_width=arr_size*0.8, head_length=arr_size*0.3333, color=color, edgecolor='black')
+
+        # Rank Plot
+        for ii, (rank, score, color) in enumerate(zip(rank_list,comp_list,color_list)):
+            for iii in range(4):
+                loc = x[rank[iii]] - with_val * (ii-len(comp_list)/2) #+ 0.024
+                axes[stage_id].text(loc, score[rank[iii]]-arr_size*0.8, str(iii+1), color=color)
+
+    fig.set_size_inches(15.5, 15.5)
+    fig.tight_layout()
+    fig.savefig(img_filename)
+    f.close()
+    return fig
+
 def interpolate_arch(arch1, arch2, alpha):
     """
     arch = arch1 * alpha + arch2 * (1 - alpha)
@@ -355,6 +452,10 @@ def interpolate_arch(arch1, arch2, alpha):
         arch.append(tmp_arch)
     return arch
 
+
+#######################################
+# Test Function
+#######################################
 def test_zc_map(proxy_name, model, dataloader, optimizer, cfg, device, task_flops, task_params, cycles,
                      est=None, logger=None, local_rank=0, prefix='', logdir='./', output_dir=''):
     batch_size = cfg.DATASET.BATCH_SIZE
@@ -438,9 +539,6 @@ def test_zc_map(proxy_name, model, dataloader, optimizer, cfg, device, task_flop
     #     sample_func = lambda : naive_model.random_sampling()
     #     pools = _EA_sample(sample_func, POPULATION_COUNT, info_funcs, constraints)
 
-
-
-
 def test_zc_map_evolve(proxy_name, model, dataloader, optimizer, cfg, device, task_flops, task_params, cycles,
                      est=None, logger=None, local_rank=0, prefix='', logdir='./', output_dir=''):
     batch_size = cfg.DATASET.BATCH_SIZE
@@ -463,6 +561,9 @@ def test_zc_map_evolve(proxy_name, model, dataloader, optimizer, cfg, device, ta
         targets  = targets.to(device)
         if iter_idx == 2: break
 
+    save_img = uimgs.permute((0,2,3,1)).numpy()
+    cv2.imwrite(os.path.join(analyze_dir, 'wot_img0.jpg'), save_img[0])
+    cv2.imwrite(os.path.join(analyze_dir, 'wot_img1.jpg'), save_img[1])
     
     ##############################################
     # Zero Cost Name (snip, synflow, grasp)
@@ -496,7 +597,6 @@ def test_zc_map_evolve(proxy_name, model, dataloader, optimizer, cfg, device, ta
         {'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0., 0, 0]), 'block_name': 'BottleneckCSP2_Search_num1_gamma0.75',} 
     ]
     man_arch1 = {'arch' : manually_arch1, 'arch_type': 'continuous'}
-    print(man_arch1, info_funcs)
     get_model_info(man_arch1, info_funcs)
     
     
@@ -512,9 +612,9 @@ def test_zc_map_evolve(proxy_name, model, dataloader, optimizer, cfg, device, ta
     # Sample Function
     ##################################
     steps = 10
-    gif_dir = os.path.join(analyze_dir, f'data.gif')
-    with imageio.get_writer(gif_dir, mode='I', fps=10) as writer:
-        for step in range(steps+1):
+    gif_dir = os.path.join(analyze_dir, f'data.mp4')
+    with imageio.get_writer(gif_dir, mode='I', fps=2) as writer:
+        for step in reversed(range(steps+1)):
             arch = interpolate_arch(manually_arch1, manually_arch2, step/steps)
             arch_info = {'arch' : arch, 'arch_type': 'continuous'}
             get_model_info(arch_info, info_funcs)
@@ -528,3 +628,101 @@ def test_zc_map_evolve(proxy_name, model, dataloader, optimizer, cfg, device, ta
             data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
             data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
             writer.append_data(data)
+            
+def test_zc_map_param (proxy_name, model, dataloader, optimizer, cfg, device, task_flops, task_params, cycles,
+                     est=None, logger=None, local_rank=0, prefix='', logdir='./', output_dir=''):
+    batch_size = cfg.DATASET.BATCH_SIZE
+    is_ddp = is_parallel(model)
+    nn_model = model.module if is_ddp else model
+    
+    naive_model  = model.module if is_ddp else model
+    search_space = naive_model.search_space
+    model.eval()
+    
+    analyze_dir = os.path.join(output_dir, 'analyze_results')
+    os.makedirs(analyze_dir, exist_ok=True)
+    ##################################################################
+    ### 0st. Select Dataset
+    ##################################################################    
+    loader = enumerate(dataloader)
+    for iter_idx, (uimgs, targets, paths, _) in loader:
+        # imgs = (batch=2, 3, height, width)
+        imgs     = uimgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
+        targets  = targets.to(device)
+        if iter_idx == 2: break
+
+    save_img = uimgs.permute((0,2,3,1)).numpy()
+    cv2.imwrite(os.path.join(analyze_dir, 'wot_img0.jpg'), save_img[0])
+    cv2.imwrite(os.path.join(analyze_dir, 'wot_img1.jpg'), save_img[1])
+    
+    ##############################################
+    # Zero Cost Name (snip, synflow, grasp)
+    ##############################################
+    info_funcs = [
+        {'flops' : (lambda x: nn_model.calculate_flops_new (x, est.flops_dict) / 1e3)},
+        {'params': (lambda x: nn_model.calculate_params_new(x, est.params_dict))},
+        {proxy_name : (lambda x: PROXY_DICT[proxy_name](model, x['arch'], imgs, targets, optimizer))},
+        {proxy_name+'_map' : (lambda x: PROXY_MAP_DICT[proxy_name](model, x['arch'], imgs, targets, True))}
+    ]
+    
+    # manually_arch = [
+    #     {'gamma': torch.tensor([0.3333, 0.3333, 0.3333]), 'n_bottlenecks': torch.tensor([0.25, 0.25, 0.25, 0.25]), 'block_name': 'BottleneckCSP_Search_num1_gamma0.75'}, 
+    #     {'gamma': torch.tensor([0.3333, 0.3333, 0.3333]), 'n_bottlenecks': torch.tensor([0.25, 0.25, 0.25, 0.25]), 'block_name': 'BottleneckCSP_Search_num1_gamma0.75'}, 
+    #     {'gamma': torch.tensor([0.3333, 0.3333, 0.3333]), 'n_bottlenecks': torch.tensor([0.25, 0.25, 0.25, 0.25]), 'block_name': 'BottleneckCSP_Search_num1_gamma0.75'}, 
+    #     {'gamma': torch.tensor([0.3333, 0.3333, 0.3333]), 'n_bottlenecks': torch.tensor([0.25, 0.25, 0.25, 0.25]), 'block_name': 'BottleneckCSP_Search_num1_gamma0.75'}, 
+    #     {'gamma': torch.tensor([0.3333, 0.3333, 0.3333]), 'n_bottlenecks': torch.tensor([0.25, 0.25, 0.25, 0.25]), 'block_name': 'BottleneckCSP2_Search_num1_gamma0.75'},
+    #     {'gamma': torch.tensor([0.3333, 0.3333, 0.3333]), 'n_bottlenecks': torch.tensor([0.25, 0.25, 0.25, 0.25]), 'block_name': 'BottleneckCSP2_Search_num1_gamma0.75'},
+    #     {'gamma': torch.tensor([0.3333, 0.3333, 0.3333]), 'n_bottlenecks': torch.tensor([0.25, 0.25, 0.25, 0.25]), 'block_name': 'BottleneckCSP2_Search_num1_gamma0.75'},
+    #     {'gamma': torch.tensor([0.3333, 0.3333, 0.3333]), 'n_bottlenecks': torch.tensor([0.25, 0.25, 0.25, 0.25]), 'block_name': 'BottleneckCSP2_Search_num1_gamma0.75'} 
+    # ]
+    
+    manually_arch1 = [
+        {'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1., 0, 0]), 'block_name': 'BottleneckCSP_Search_num1_gamma0.75',}, 
+        {'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([1., 0., 0, 0]), 'block_name': 'BottleneckCSP_Search_num1_gamma0.75',}, 
+        { 'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1., 0, 0]), 'block_name': 'BottleneckCSP_Search_num1_gamma0.75',},#
+        {'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1., 0, 0]), 'block_name': 'BottleneckCSP_Search_num1_gamma0.75',}, 
+        {'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0., 0, 0]), 'block_name': 'BottleneckCSP2_Search_num1_gamma0.75',},
+        {'gamma': torch.tensor([0., 0., 1.]), 'n_bottlenecks': torch.tensor([0., 1., 0, 0]), 'block_name': 'BottleneckCSP2_Search_num1_gamma0.75',},
+        {'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0., 0, 0]), 'block_name': 'BottleneckCSP2_Search_num1_gamma0.75',},
+        {'gamma': torch.tensor([1., 0., 0.]), 'n_bottlenecks': torch.tensor([1., 0., 0, 0]), 'block_name': 'BottleneckCSP2_Search_num1_gamma0.75',} 
+    ]
+    man_arch1 = {'arch' : manually_arch1, 'arch_type': 'continuous'}
+    get_model_info(man_arch1, info_funcs)
+    
+    
+    # stage = 2
+    # manually_arch2 = copy.deepcopy(manually_arch1)
+    # manually_arch2[stage]['gamma']         = torch.tensor([0., 1., 0.]) # torch.tensor([0., 0., 1.])
+    # manually_arch2[stage]['n_bottlenecks'] = torch.tensor([0., 1., 0, 0]) # torch.tensor([0., 1., 0, 0])
+    
+    # man_arch2 = {'arch' : manually_arch2, 'arch_type': 'continuous'}
+    # get_model_info(man_arch2, info_funcs)
+    
+    ##################################
+    # Sample Function
+    ##################################
+    samples = 6
+    score_list = []
+    wot_score_list = []
+    for step in range(samples):
+        score_list.append(copy.deepcopy(man_arch1['naswot_map']))
+        wot_score_list.append(man_arch1['naswot'])
+        model._initialize_weights()
+        get_model_info(man_arch1, info_funcs)
+
+    image_dir = os.path.join(analyze_dir, f'result.jpg')
+    text_dir  = os.path.join(analyze_dir, f'result.txt')
+    arch_info_list = [
+        {
+            'arch' : man_arch1['arch'],
+            'arch_type' : 'continuous',
+            'naswot_map' : score,
+            'flops' : man_arch1['flops'],
+            'params' : man_arch1['params'],
+            'naswot' : wot_score,
+            
+            
+        } for score, wot_score in zip(score_list, wot_score_list) 
+    ]
+    fig = analyze_map_func2(arch_info_list, f"WOT Score Analyze", image_dir, text_dir)
+        

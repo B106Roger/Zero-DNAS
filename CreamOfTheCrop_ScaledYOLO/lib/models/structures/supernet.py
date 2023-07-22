@@ -34,6 +34,19 @@ class Theta(nn.Module):
 
     def forward(self):
         return self.thetas
+
+# Reference: https://github.com/yandexdataschool/gumbel_lstm/blob/master/gumbel_sigmoid.py
+def gumbel_sigmoid(logits, temperature = 1.0):
+    eps=1e-20
+    
+    #sample from Gumbel(0, 1)
+    uniform1 = torch.rand(logits.shape)
+    uniform2 = torch.rand(logits.shape)
+    
+    noise = -torch.log(torch.log(uniform2 + eps)/torch.log(uniform1 + eps) + eps)
+    
+    return torch.nn.functional.sigmoid((logits+noise) / temperature)
+
 # Supernet Structures
 class SuperNet(nn.Module):
 
@@ -97,17 +110,17 @@ class SuperNet(nn.Module):
         
         # Build strides, anchors
         m = self.blocks[-1]  # Detect()
-        if isinstance(m, Detect):
+        if isinstance(m, Detect) or isinstance(m, IDetect):
             s = 256  # 2x min stride
             m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, in_chans, s, s))  ])  # forward
             m.anchors /= m.stride.view(-1, 1, 1)
             check_anchor_order(m)
             self.stride = m.stride
-            # self._initialize_detector_bias()  # only run once
+            # self._initialize_detector_biases()  # only run once
             # print('Strides: %s' % m.stride.tolist())
         
         # [Roger]
-        DEBUG=True
+        DEBUG=False
         if not DEBUG:
             algorithm_type = get_algorithm_type()
             if algorithm_type == 'ZeroDNAS_Egor':
@@ -117,9 +130,9 @@ class SuperNet(nn.Module):
             else:
                 raise ValueError(f"Invalid algorithm type {algorithm_type}")
         else:
-            # self._initialize_efficientnet() # efficientnet_init_weights(self) &  self._initialize_detector_bias()
-            # self._initialize_weights(True)
-            # self._initialize_detector_bias()
+            # self._initialize_efficientnet() # efficientnet_init_weights(self) &  self._initialize_detector_biases()
+            self._initialize_weights(True)
+            self._initialize_detector_biases()
             pass
             
     def initialize_thetas(self, block_args):
@@ -220,7 +233,11 @@ class SuperNet(nn.Module):
         
         return x #, feature_out, chosen_subnet[:-2]
 
-    def _initialize_detector_bias(self):
+
+    ################################################
+    # Initialize Network Parameter
+    ################################################
+    def _initialize_detector_biases(self):
         # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1.
         m = self.blocks[-1]  # Detect() module
         cf=None
@@ -241,10 +258,9 @@ class SuperNet(nn.Module):
         #         b[:, 4] += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
         #         b[:, 5:] += math.log(0.6 / (m.nc - 0.99)) if cf is None else torch.log(cf / cf.sum())  # cls
         #     mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
-        self._initialize_detector_bias()
+        # self._initialize_detector_biases()
         # Initialize Backbone
         for m in self.modules():
-            print('m = ', m )
             t = type(m)
             if t is nn.Conv2d:
                 if first: continue
@@ -275,7 +291,7 @@ class SuperNet(nn.Module):
 
     def _initialize_efficientnet(self):
         efficientnet_init_weights(self)
-        self._initialize_detector_bias()
+        self._initialize_detector_biases()
 
     def rand_parameters(self, architecture, meta=False):
         for name, param in self.named_parameters(recurse=True):
@@ -350,19 +366,36 @@ class SuperNet(nn.Module):
                     block_arch['operators'].append(block_choice_arch)
                         
             elif 'Search' in arch['block_name']:
-                for key, value in arch.items():
-                    if key == 'block_name': 
-                        block_arch[key] = value
-                    else:
-                        idx = np.random.randint(0, len(arch[key]))
-                        arch_prob = torch.zeros_like(arch[key])
-                        arch_prob[idx] = 1.0
-                        block_arch[key] = arch_prob.to(device)
+                if 'BottleneckCSP' in arch['block_name']:
+                    for key, value in arch.items():
+                        if key == 'block_name': 
+                            block_arch[key] = value
+                        else:
+                            idx = np.random.randint(0, len(arch[key]))
+                            arch_prob = torch.zeros_like(arch[key])
+                            arch_prob[idx] = 1.0
+                            block_arch[key] = arch_prob.to(device)
+                elif 'ELAN' in arch['block_name']:
+                    for key, value in arch.items():
+                        if key == 'block_name': 
+                            block_arch[key] = value
+                        elif key == 'connection':
+                            arch_prob = torch.zeros_like(arch[key])
+                            for i in range(len(arch_prob)):
+                                arch_prob[i] = np.random.choice([0.0, 1.0], 1)
+                            block_arch[key] = arch_prob.to(device)
+                        else:
+                            idx = np.random.randint(0, len(arch[key]))
+                            arch_prob = torch.zeros_like(arch[key])
+                            arch_prob[idx] = 1.0
+                            block_arch[key] = arch_prob.to(device)
+                else:
+                    raise ValueError(f"Unrecognize Block Type : {arch['block_name']}")
             
             res.append(block_arch)
         return res
     
-    def gumbel_sampling(self, temperature=None, device='cpu'):
+    def gumbel_sampling(self, temperature=None, device='cpu', detach=False):
         """
         this.tehtas_main = {
             {
@@ -414,21 +447,38 @@ class SuperNet(nn.Module):
                             block_choice_arch[key] = value
                         else:
                             arch_prob = choice_arch[key].clone()
-                            block_choice_arch[key] = torch.nn.functional.gumbel_softmax(arch_prob.to(device), temperature)
+                            gumbel_value = torch.nn.functional.gumbel_softmax(arch_prob.to(device), temperature)
+                            block_choice_arch[key] = gumbel_value if not detach else gumbel_value.detach()
                     block_arch['operators'].append(block_choice_arch)
                         
             elif 'Search' in arch['block_name']:
-                search_idx = 0
-                for key, value in arch.items():
-                    if key == 'block_name': 
-                        block_arch[key] = value
-                    else:
-                        arch_prob = arch[key].clone()
-                        if DEBUG: random_testing(f'before {stage_idx} {search_idx} tmp: {temperature}')
-                        val = torch.nn.functional.gumbel_softmax(arch_prob.to(device), temperature, dim=-1)
-                        if DEBUG: random_testing(f'after  {stage_idx} {search_idx} tmp: {temperature}')
-                        block_arch[key] = val
-                        search_idx += 1
+                if 'BottleneckCSP' in arch['block_name']:
+                    search_idx = 0
+                    for key, value in arch.items():
+                        if key == 'block_name': 
+                            block_arch[key] = value
+                        else:
+                            arch_prob = arch[key].clone()
+                            gumbel_value = torch.nn.functional.gumbel_softmax(arch_prob.to(device), temperature, dim=-1)
+                            block_arch[key] = gumbel_value if not detach else gumbel_value.detach()
+                            search_idx += 1
+                elif 'ELAN' in arch['block_name']:
+                    search_idx = 0
+                    for key, value in arch.items():
+                        if key == 'block_name': 
+                            block_arch[key] = value
+                        elif key == 'connection':
+                            arch_prob = arch[key].clone()
+                            gumbel_value = gumbel_sigmoid(arch_prob.to(device), temperature)
+                            block_arch[key] = gumbel_value if not detach else gumbel_value.detach()
+                            search_idx += 1
+                        else:
+                            arch_prob = arch[key].clone()
+                            gumbel_value = torch.nn.functional.gumbel_softmax(arch_prob.to(device), temperature, dim=-1)
+                            block_arch[key] = gumbel_value if not detach else gumbel_value.detach()
+                            search_idx += 1
+                else:
+                    raise ValueError(f"Unrecognize Block Type : {arch['block_name']}")       
             else:
                 raise ValueError(f"Invalid Block Name {arch['block_name']}")
             res.append(block_arch)
@@ -465,13 +515,28 @@ class SuperNet(nn.Module):
                     block_arch['operators'].append(block_choice_arch)
                         
             elif 'Search' in arch['block_name']:
-                for key, value in arch.items():
-                    if key == 'block_name': 
-                        block_arch[key] = value
-                    else:
-                        arch_prob = arch[key].clone()
-                        block_arch[key] = torch.nn.functional.softmax(arch_prob.to(device) / temperature, dim=-1)
-                        if detach: block_arch[key] = block_arch[key].detach()
+                if 'BottleneckCSP' in arch['block_name']:
+                    for key, value in arch.items():
+                        if key == 'block_name': 
+                            block_arch[key] = value
+                        else:
+                            arch_prob = arch[key].clone()
+                            block_arch[key] = torch.nn.functional.softmax(arch_prob.to(device) / temperature, dim=-1)
+                            if detach: block_arch[key] = block_arch[key].detach()
+                elif 'ELAN' in arch['block_name']:
+                    for key, value in arch.items():
+                        if key == 'block_name': 
+                            block_arch[key] = value
+                        elif key == 'connection':
+                            arch_prob = arch[key].clone()
+                            block_arch[key] = torch.nn.functional.sigmoid(arch_prob.to(device) / temperature)                            
+                            if detach: block_arch[key] = block_arch[key].detach()
+                        else:
+                            arch_prob = arch[key].clone()
+                            block_arch[key] = torch.nn.functional.softmax(arch_prob.to(device) / temperature, dim=-1)
+                            if detach: block_arch[key] = block_arch[key].detach()
+                else:
+                    raise ValueError(f"Unrecognize Block Type : {arch['block_name']}")
             else:
                 raise ValueError(f"Invalid Block Name {arch['block_name']}")
             res.append(block_arch)
@@ -499,13 +564,25 @@ class SuperNet(nn.Module):
                     block_arch['operators'].append(block_choice_arch)
                         
             elif 'Search' in arch['block_name']:
-                for key, value in arch.items():
-                    if key == 'block_name': 
-                        block_arch[key] = value
-                    else:
-                        arch_prob = torch.zeros_like(arch[key])
-                        arch_prob[-1] = 1.0
-                        block_arch[key] = arch_prob
+                if 'BottleneckCSP' in arch['block_name']:
+                    for key, value in arch.items():
+                        if key == 'block_name': 
+                            block_arch[key] = value
+                        else:
+                            arch_prob = torch.zeros_like(arch[key])
+                            arch_prob[-1] = 1.0
+                            block_arch[key] = arch_prob
+                elif 'ELAN' in arch['block_name']:
+                    for key, value in arch.items():
+                        if key == 'block_name': 
+                            block_arch[key] = value
+                        elif key == 'connection':
+                            arch_prob = torch.ones_like(arch[key])
+                            block_arch[key] = arch_prob
+                        else:
+                            arch_prob = torch.zeros_like(arch[key])
+                            arch_prob[-1] = 1.0
+                            block_arch[key] = arch_prob
             else:
                 raise ValueError(f"Invalid Block Name {arch['block_name']}")
             res.append(block_arch)
@@ -533,13 +610,25 @@ class SuperNet(nn.Module):
                     block_arch['operators'].append(block_choice_arch)
                         
             elif 'Search' in arch['block_name']:
-                for key, value in arch.items():
-                    if key == 'block_name': 
-                        block_arch[key] = value
-                    else:
-                        arch_prob = torch.zeros_like(arch[key])
-                        arch_prob[0] = 1.0
-                        block_arch[key] = arch_prob
+                if 'BottleneckCSP' in arch['block_name']:
+                    for key, value in arch.items():
+                        if key == 'block_name': 
+                            block_arch[key] = value
+                        else:
+                            arch_prob = torch.zeros_like(arch[key])
+                            arch_prob[0] = 1.0
+                            block_arch[key] = arch_prob
+                elif 'ELAN' in arch['block_name']:
+                    for key, value in arch.items():
+                        if key == 'block_name': 
+                            block_arch[key] = value
+                        elif key == 'connection':
+                            arch_prob = torch.zeros_like(arch[key])
+                            block_arch[key] = arch_prob
+                        else:
+                            arch_prob = torch.zeros_like(arch[key])
+                            arch_prob[0] = 1.0
+                            block_arch[key] = arch_prob
             
             else:
                 raise ValueError(f"Invalid Block Name {arch['block_name']}")
@@ -572,14 +661,30 @@ class SuperNet(nn.Module):
                 pass
 
             elif 'Search' in arch['block_name']:
-                for key, value in arch.items():
-                    if key == 'block_name': 
-                        block_arch[key] = value
-                    else:
-                        max_idx   = arch[key].argmax().detach().cpu().numpy()
-                        arch_prob = torch.zeros_like(arch[key])
-                        arch_prob[max_idx] = 1.0
-                        block_arch[key] = arch_prob
+                if 'BottleneckCSP' in arch['block_name']:
+                    for key, value in arch.items():
+                        if key == 'block_name': 
+                            block_arch[key] = value
+                        else:
+                            max_idx   = arch[key].argmax().detach().cpu().numpy()
+                            arch_prob = torch.zeros_like(arch[key])
+                            arch_prob[max_idx] = 1.0
+                            block_arch[key] = arch_prob
+                elif 'ELAN' in arch['block_name']:
+                    for key, value in arch.items():
+                        if key == 'block_name': 
+                            block_arch[key] = value
+                        elif key == 'connection':
+                            arch_prob = torch.zeros_like(arch[key])
+                            for i in range(len(arch[key])):
+                                arch_prob[i] = 1.0 if arch[key][i] > 0.0 else 0.0
+                            block_arch[key] = arch_prob
+                        else:
+                            max_idx   = arch[key].argmax().detach().cpu().numpy()
+                            arch_prob = torch.zeros_like(arch[key])
+                            arch_prob[max_idx] = 1.0
+                            block_arch[key] = arch_prob
+                     
             else:
                 raise ValueError(f"Invalid Block Name {arch['block_name']}")
             
@@ -616,7 +721,7 @@ class SuperNet(nn.Module):
             # [Continuous Mode] use architecture distribtuion and weighted-sum their output to do inference
             elif architecture_type == 'continuous':
                 layer_flops = 0.0
-                if 'Search' in block.__class__.__name__:
+                if block.__class__ in [BottleneckCSP_Search, BottleneckCSP2_Search]:
                     # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
                     soft_mask_variables = architecture[current_theta]
                     options, search_keys = block.generate_options()
@@ -638,6 +743,29 @@ class SuperNet(nn.Module):
                         layer_flops += choice_flops * prob
 
                     current_theta += 1
+                elif block.__class__ in [ELAN_Search, ELAN2_Search]:
+                    # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
+                    soft_mask_variables = architecture[current_theta]
+                    options, search_keys = block.generate_options()
+                    comb_list       = block._connection_combination(block.search_space['connection'])
+                    comb_list_index = block._connection_combination(block.search_space['connection'], index=True)
+
+                    for option in options:
+                        args_cn             = int(block.search_space['gamma'     ][option[search_keys.index('gamma')]] * block.base_cn)
+                        args_connection     = comb_list[option[search_keys.index('connection')]]
+                        args_connection_idx = comb_list_index[option[search_keys.index('connection')]]
+                        prob = 1.0
+                        
+                        prob *= soft_mask_variables['gamma'][option[search_keys.index('gamma')]]
+                        for connection_idx in args_connection_idx:
+                            prob *= soft_mask_variables['connection'][connection_idx]
+                        query_key = f'cn{args_cn}-con{str(args_connection)}'
+
+                        choice_flops = flops_dict[block_idx][query_key]
+                        if SHOW_FLOP_STAT: print(f'[FLOPS opt={query_key}] flops={choice_flops} prob={prob} mut={choice_flops * prob}')
+                        layer_flops += choice_flops * prob
+
+                    current_theta += 1
                 else:
                     layer_flops = flops_dict[block_idx]['0']
                 
@@ -655,6 +783,7 @@ class SuperNet(nn.Module):
         -------
         overall_params: torch.tensor(1,), M-PARAMS
         """
+        SHOW_FLOP_STAT=False
         keys = sorted(self.search_space.keys())
         architecture = architecture_info['arch']
         architecture_type = architecture_info['arch_type']
@@ -670,7 +799,7 @@ class SuperNet(nn.Module):
 
             # [Continuous Mode] use architecture distribtuion and weighted-sum their output to do inference
             elif architecture_type == 'continuous':
-                if 'Search' in block.__class__.__name__:
+                if block.__class__ in [BottleneckCSP_Search, BottleneckCSP2_Search]:
                     # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
                     soft_mask_variables = architecture[current_theta]
                         
@@ -691,6 +820,29 @@ class SuperNet(nn.Module):
 
                         layer_params += choice_params * prob
                     current_theta += 1
+                elif block.__class__ in [ELAN_Search, ELAN2_Search]:
+                    # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
+                    soft_mask_variables = architecture[current_theta]
+                    options, search_keys = block.generate_options()
+                    comb_list       = block._connection_combination(block.search_space['connection'])
+                    comb_list_index = block._connection_combination(block.search_space['connection'], index=True)
+
+                    for option in options:
+                        args_cn             = int(block.search_space['gamma'     ][option[search_keys.index('gamma')]] * block.base_cn)
+                        args_connection     = comb_list[option[search_keys.index('connection')]]
+                        args_connection_idx = comb_list_index[option[search_keys.index('connection')]]
+                        prob = 1.0
+                        
+                        prob *= soft_mask_variables['gamma'][option[search_keys.index('gamma')]]
+                        for connection_idx in args_connection_idx:
+                            prob *= soft_mask_variables['connection'][connection_idx]
+                        query_key = f'cn{args_cn}-con{str(args_connection)}'
+
+                        choice_params = params_dict[block_idx][query_key]
+                        if SHOW_FLOP_STAT: print(f'[PARAM opt={query_key}] parms={choice_params} prob={prob} mut={choice_params * prob}')
+                        layer_params += choice_params * prob
+                    current_theta += 1
+                    
                 else:
                     layer_params += params_dict[block_idx]['0']
                 overall_params += layer_params
@@ -759,7 +911,7 @@ class SuperNet(nn.Module):
             # [Continuous Mode] use architecture distribtuion and weighted-sum their output to do inference
             elif architecture_type == 'continuous':
                 layer_zc = 0.0
-                if 'Search' in block.__class__.__name__:
+                if   block.__class__ in [BottleneckCSP, BottleneckCSP2_Search]:
                     # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
                     soft_mask_variables = architecture[current_theta]
                     options, search_keys = block.generate_options()
@@ -781,6 +933,32 @@ class SuperNet(nn.Module):
                         layer_zc += choice_zc * prob
 
                     current_theta += 1
+                
+                elif block.__class__ in [ELAN_Search, ELAN2_Search]:
+                    # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
+                    soft_mask_variables = architecture[current_theta]
+                    options, search_keys = block.generate_options()
+                    comb_list       = block._connection_combination(block.search_space['connection'])
+                    comb_list_index = block._connection_combination(block.search_space['connection'], index=True)
+
+                    for option in options:
+                        args_cn             = int(block.search_space['gamma'     ][option[search_keys.index('gamma')]] * block.base_cn)
+                        args_connection     = comb_list[option[search_keys.index('connection')]]
+                        args_connection_idx = comb_list_index[option[search_keys.index('connection')]]
+                        prob = 1.0
+                        
+                        prob *= soft_mask_variables['gamma'][option[search_keys.index('gamma')]]
+                        for connection_idx in args_connection_idx:
+                            prob *= soft_mask_variables['connection'][connection_idx]
+                        query_key = f'cn{args_cn}-con{str(args_connection)}'
+                        
+                        choice_zc = zc_map[current_theta][query_key]
+                        if SHOW_ZC_STAT: print(f'[ZC opt={query_keys}] flops={choice_zc} prob={prob} mut={choice_zc * prob}')
+                        layer_zc += choice_zc * prob
+
+                    current_theta += 1
+                
+                
                 else:
                     pass
                     # layer_flops = flops_dict[block_idx]['0']
