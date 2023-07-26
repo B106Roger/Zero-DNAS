@@ -757,8 +757,9 @@ class SuperNet(nn.Module):
                         prob = 1.0
                         
                         prob *= soft_mask_variables['gamma'][option[search_keys.index('gamma')]]
-                        for connection_idx in args_connection_idx:
-                            prob *= soft_mask_variables['connection'][connection_idx]
+                        prob *= torch.prod(soft_mask_variables['connection'][args_connection_idx])
+                        # for connection_idx in args_connection_idx:
+                        #     prob *= soft_mask_variables['connection'][connection_idx]
                         query_key = f'cn{args_cn}-con{str(args_connection)}'
 
                         choice_flops = flops_dict[block_idx][query_key]
@@ -771,8 +772,7 @@ class SuperNet(nn.Module):
                 
                 if SHOW_FLOP_STAT: print(f'[FLOPS {block_idx}]={layer_flops}')
                 overall_flops += layer_flops
-        #         print(f'{block_idx:2s} {block.__class__.__name__:25s} {layer_flops:8.2f}')
-        # print('Result ', overall_flops)
+        
         return overall_flops
     
     def calculate_params_new(self, architecture_info, params_dict):
@@ -792,18 +792,18 @@ class SuperNet(nn.Module):
         overall_params = 0
         for block_idx, block in enumerate(self.blocks):            
             block_idx = str(block_idx)
-            layer_params = 0.
             # [Discrete Mode] use architecture to sample subnetwork to do inference
             if architecture_type == 'discrete':
                 raise ValueError("Not Implement")
 
             # [Continuous Mode] use architecture distribtuion and weighted-sum their output to do inference
             elif architecture_type == 'continuous':
+                layer_params = 0.
                 if block.__class__ in [BottleneckCSP_Search, BottleneckCSP2_Search]:
                     # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
                     soft_mask_variables = architecture[current_theta]
-                        
                     options, search_keys = block.generate_options()
+                    
                     for option in options:
                         prob = 1.0
                         query_keys = []
@@ -834,20 +834,20 @@ class SuperNet(nn.Module):
                         prob = 1.0
                         
                         prob *= soft_mask_variables['gamma'][option[search_keys.index('gamma')]]
-                        for connection_idx in args_connection_idx:
-                            prob *= soft_mask_variables['connection'][connection_idx]
+                        prob *= torch.prod(soft_mask_variables['connection'][args_connection_idx])
+                        # for connection_idx in args_connection_idx:
+                        #     prob *= soft_mask_variables['connection'][connection_idx]
                         query_key = f'cn{args_cn}-con{str(args_connection)}'
 
                         choice_params = params_dict[block_idx][query_key]
                         if SHOW_FLOP_STAT: print(f'[PARAM opt={query_key}] parms={choice_params} prob={prob} mut={choice_params * prob}')
                         layer_params += choice_params * prob
                     current_theta += 1
-                    
                 else:
                     layer_params += params_dict[block_idx]['0']
+
                 overall_params += layer_params
-        #         print(f'{block_idx:2s} {block.__class__.__name__:25s} {layer_flops:8.2f}')
-        # print('Result ', overall_flops)
+
         return overall_params
 
     def calculate_layers_new(self, architecture):
@@ -911,7 +911,7 @@ class SuperNet(nn.Module):
             # [Continuous Mode] use architecture distribtuion and weighted-sum their output to do inference
             elif architecture_type == 'continuous':
                 layer_zc = 0.0
-                if   block.__class__ in [BottleneckCSP, BottleneckCSP2_Search]:
+                if block.__class__ in [BottleneckCSP_Search, BottleneckCSP2_Search]:
                     # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
                     soft_mask_variables = architecture[current_theta]
                     options, search_keys = block.generate_options()
@@ -935,12 +935,19 @@ class SuperNet(nn.Module):
                     current_theta += 1
                 
                 elif block.__class__ in [ELAN_Search, ELAN2_Search]:
+                    import time
                     # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
                     soft_mask_variables = architecture[current_theta]
+                    # st = time.time()
                     options, search_keys = block.generate_options()
+                    # st1_time = time.time() - st
+                    
+                    # st = time.time()
                     comb_list       = block._connection_combination(block.search_space['connection'])
                     comb_list_index = block._connection_combination(block.search_space['connection'], index=True)
-
+                    # st2_time = time.time() - st
+                    
+                    # st = time.time()
                     for option in options:
                         args_cn             = int(block.search_space['gamma'     ][option[search_keys.index('gamma')]] * block.base_cn)
                         args_connection     = comb_list[option[search_keys.index('connection')]]
@@ -948,17 +955,18 @@ class SuperNet(nn.Module):
                         prob = 1.0
                         
                         prob *= soft_mask_variables['gamma'][option[search_keys.index('gamma')]]
-                        for connection_idx in args_connection_idx:
-                            prob *= soft_mask_variables['connection'][connection_idx]
+                        prob *= torch.prod(soft_mask_variables['connection'][args_connection_idx])
+                        # for connection_idx in args_connection_idx:
+                        #     prob *= soft_mask_variables['connection'][connection_idx]
                         query_key = f'cn{args_cn}-con{str(args_connection)}'
                         
                         choice_zc = zc_map[current_theta][query_key]
                         if SHOW_ZC_STAT: print(f'[ZC opt={query_keys}] flops={choice_zc} prob={prob} mut={choice_zc * prob}')
                         layer_zc += choice_zc * prob
 
+                    # st3_time = time.time() - st
+                    # print(f'st1_time={st1_time:.8f} st2_time={st2_time:.8f} st3_time={st3_time:.8f} total={st1_time+st2_time+st3_time:.8f}')
                     current_theta += 1
-                
-                
                 else:
                     pass
                     # layer_flops = flops_dict[block_idx]['0']

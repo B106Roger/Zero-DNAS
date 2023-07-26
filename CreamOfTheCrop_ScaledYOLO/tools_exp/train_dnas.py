@@ -164,7 +164,7 @@ def main():
         if isinstance(module, ConvNP):
             CBL_idx.append(idx)    
     # initialize flops look-up table
-    model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE))
+    model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE), signature=args.model)
     if args.collect_samples > 0:
         collect_samples(args.collect_samples, model, prioritized_board, model_est)
         exit()

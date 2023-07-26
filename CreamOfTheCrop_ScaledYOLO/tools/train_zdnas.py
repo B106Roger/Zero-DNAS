@@ -191,7 +191,7 @@ def main():
 
 
     # initialize flops look-up table
-    model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE), search_space=SEARCH_SPACES)
+    model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE), search_space=SEARCH_SPACES, signature=args.model)
 
     # create optimizer and resume from checkpoint
     if args.resume_theta_training:
@@ -288,7 +288,7 @@ def main():
     ##################################################################    
     from lib.zero_proxy import naswot
     PROXY_DICT = {
-        'naswot': lambda x: naswot.calculate_zero_cost_map(model, x, imgs, targets, None),
+        'naswot': lambda arch_prob: naswot.calculate_zero_cost_map(model, arch_prob, imgs, targets, None),
     }
     if args.zc not in PROXY_DICT.keys():
         raise Value(f"key {args.zc} is not registered in PROXY_DICT")

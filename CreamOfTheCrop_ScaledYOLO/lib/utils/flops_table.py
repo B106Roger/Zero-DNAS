@@ -5,6 +5,7 @@
 
 import torch
 from pathlib import Path
+import os
 import json
 
 from lib.utils.flops_counter import get_model_complexity_info
@@ -28,31 +29,32 @@ def mac_flop_converter(macs, algorithm_type):
     return flops
 
 class FlopsEst(object):
-    def __init__(self, model, input_shape=(2, 3, 416, 416), search_space=None):
+    def __init__(self, model, input_shape=(2, 3, 416, 416), search_space=None, signature=None):
         self.search_space = deepcopy(search_space)
         self.block_num = len(model.blocks)
         # self.choice_num = len(model.blocks[0])
         self.flops_dict = {}
         self.params_dict = {}
+        
+        flops_filename  = os.path.basename(signature) +'_flops.json'
+        params_filename = os.path.basename(signature) +'_params.json'
 
-       
         model = model.cpu()
 
         self.params_fixed = 0
         self.flops_fixed = 0
         
-        # if Path('flops_dict.json').exists() and Path('params_dict.json').exists():
-        if True:
-            self.load_flops_dict()
-            self.load_params_dict()
+        if Path(flops_filename).exists() and Path(params_filename).exists():
+            self.load_flops_dict(flops_filename)
+            self.load_params_dict(params_filename)
         else:
             flops_dynamic = 0
             params_dynamic = 0
             spatial_dimension = input_shape[2:]
             # the largest params, its corresponding flops and params
-            max_param_arch_flops, max_param_arch_params = 0, 0
+            largest_arch_flops, largest_arch_params = 0, 0
             # the smallest params, its corresponding flops and params
-            min_param_arch_flops, min_param_arch_params = 0, 0
+            smallest_arch_flops, smallest_arch_params = 0, 0
 
             dimension_list    = [spatial_dimension]
             channel_list      = [3]
@@ -68,15 +70,24 @@ class FlopsEst(object):
                 out_chs = block.block_arguments['out_chs']
                 f       = block.block_arguments['f']
                 
-                dimension_factor = 4
-                s_factor = dimension_factor**2
                 if isinstance(f, list): # Case of Detect, IDetect
+                    dimension_factor = 1
+                    s_factor = dimension_factor**2
+                    
                     input_shape = [
-                        (channel_list[f_i], 
+                        (1,
+                         channel_list[f_i], 
                          dimension_list[f_i][0] // dimension_factor, 
                          dimension_list[f_i][1] // dimension_factor
                         ) for f_i in f]
                 else:
+                    dimension_factor = 1
+                    tmp_dim = dimension_list[f][0] 
+                    while tmp_dim % 4 == 0 and dimension_factor < 16:
+                        tmp_dim = tmp_dim // 2
+                        dimension_factor *= 2
+                    s_factor = dimension_factor**2
+                    
                     input_shape = (
                         in_chs, 
                         dimension_list[f][0] // dimension_factor, 
@@ -101,11 +112,11 @@ class FlopsEst(object):
                             as_strings=False, 
                             print_per_layer_stat=False,
                         )
-                        
                         algorithm_type = get_algorithm_type()
                         flops  = mac_flop_converter(macs, algorithm_type) / 1e6 * s_factor    # (M)
                         params = params / 1e6                                                 # (M)
                         next_spatial_dimension = (next_spatial_dimension[0] * dimension_factor, next_spatial_dimension[1] * dimension_factor)
+                        
                         dimension_list.append(next_spatial_dimension)
                         channel_list.append(out_chs)
                         
@@ -180,7 +191,7 @@ class FlopsEst(object):
                                 flops  = mac_flop_converter(macs, algorithm_type) / 1e6  * s_factor # (M)
                                 params = params / 1e6                                   # (M)
                                 next_spatial_dimension = (next_spatial_dimension[0] * dimension_factor, next_spatial_dimension[1] * dimension_factor)
-                                
+
                                 query_key = f'cn{args_cn}-con{str(args_connection)}'
                                 self.flops_dict[block_id][query_key]  = flops
                                 self.params_dict[block_id][query_key] = params
@@ -260,21 +271,34 @@ class FlopsEst(object):
                     print(f'{block_id:2s} {block.__class__.__name__:20s} in : {str(in_dim):20s} out : {str(out_dim):20s} MIN FLOPS: {min(flops_list)/1e3:5.2f}G  PARAMS: {min(param_list):.2f}M')
                     
                 spatial_dimension = next_spatial_dimension    
-                max_param_arch_params += param_list[np.argmax(param_list)]
-                max_param_arch_flops  += flops_list[np.argmax(flops_list)]
-                min_param_arch_params += param_list[np.argmin(param_list)]
-                min_param_arch_flops  += flops_list[np.argmin(flops_list)]
+                largest_arch_params += param_list[np.argmax(flops_list)]
+                largest_arch_flops  += flops_list[np.argmax(flops_list)]
+                
+                smallest_arch_params += param_list[np.argmin(flops_list)]
+                smallest_arch_flops  += flops_list[np.argmin(flops_list)]
                 
 
-            self.flops_dict['flops_fixed'] = self.flops_fixed
-            self.params_dict['params_fixed'] = self.params_fixed
-            self.save_flops_dict()
-            self.save_params_dict()
+            self.flops_dict['flops_fixed']      = self.flops_fixed
+            self.flops_dict['flops_dynamic']    = flops_dynamic
+            self.flops_dict['flops_supernet']   = self.flops_fixed + flops_dynamic
+            self.flops_dict['largest_arch']     = largest_arch_flops
+            self.flops_dict['smallest_arch']    = smallest_arch_flops
+            self.flops_dict['model_config']     = signature
             
-            print(f'Largest  SubNet  Params: {max_param_arch_params:8.4f}  |  FLOPS: {max_param_arch_flops/1e3:8.4f}G ')
-            print(f'Smallest SubNet  Params: {min_param_arch_params:8.4f}  |  FLOPS: {min_param_arch_flops/1e3:8.4f}G ')
-            print(f'SuperNet GFLOPS = Fixed + Choices = {self.flops_fixed/1e3:8.4f} + {flops_dynamic/1e3:8.4f} = {(self.flops_fixed+flops_dynamic)/1e3:8.4f}')
-            print(f'SuperNet MParam = Fixed + Choices = {   self.params_fixed:8.4f} + {   params_dynamic:8.4f} = {    self.params_fixed+params_dynamic:8.4f}')
+            self.params_dict['params_fixed']    = self.params_fixed
+            self.params_dict['params_dynamic']  = params_dynamic
+            self.params_dict['params_supernet'] = self.params_fixed + params_dynamic
+            self.params_dict['largest_arch']     = largest_arch_params
+            self.params_dict['smallest_arch']    = smallest_arch_params
+            self.params_dict['model_config']    = signature
+            
+            self.save_flops_dict(flops_filename)
+            self.save_params_dict(params_filename)
+            
+            print(f"Largest  SubNet  Params: { self.params_dict['largest_arch']:8.4f}  |  FLOPS: { self.flops_dict['largest_arch']/1e3:8.4f}G ")
+            print(f"Smallest SubNet  Params: {self.params_dict['smallest_arch']:8.4f}  |  FLOPS: {self.flops_dict['smallest_arch']/1e3:8.4f}G ")
+            print(f"SuperNet GFLOPS = Fixed + Choices = {self.flops_dict['flops_fixed']/1e3:8.4f} + {self.flops_dict['flops_dynamic']/1e3:8.4f} = {self.flops_dict['flops_supernet']/1e3:8.4f}")
+            print(f"SuperNet MParam = Fixed + Choices = {  self.params_dict['params_fixed']:8.4f} + {  self.params_dict['params_dynamic']:8.4f} = {self.params_dict['params_supernet']:8.4f}")
 
 
     # return params (M)
@@ -299,18 +323,18 @@ class FlopsEst(object):
                 flops += self.flops_dict[block_id][module_id][choice]
         return flops + self.flops_fixed
 
-    def save_flops_dict(self):
-        with open('flops_dict.json', 'w') as f:
+    def save_flops_dict(self, filename):
+        with open(filename, 'w') as f:
             json.dump(self.flops_dict, f)
 
-    def load_flops_dict(self):
-        with open('flops_dict.json') as f:
+    def load_flops_dict(self, filename):
+        with open(filename) as f:
             self.flops_dict = json.load(f)
 
-    def save_params_dict(self):
-        with open('params_dict.json', 'w') as f:
+    def save_params_dict(self, filename):
+        with open(filename, 'w') as f:
             json.dump(self.params_dict, f)
 
-    def load_params_dict(self):
-        with open('params_dict.json') as f:
+    def load_params_dict(self, filename):
+        with open(filename) as f:
             self.params_dict = json.load(f)

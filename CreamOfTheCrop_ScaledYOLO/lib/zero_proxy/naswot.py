@@ -123,7 +123,7 @@ def preprocess_block(model):
                     
             block_id += 1
 
-def calculate_zero_cost_map(model, arch_prob, inputs, targets, opt=None):
+def calculate_zero_cost_map(model, arch_prob, inputs, targets, short_name=None):
     global PREPROCESSED_BLOCK
     if not PREPROCESSED_BLOCK: 
         preprocess_block(model)
@@ -160,9 +160,9 @@ def calculate_zero_cost_map(model, arch_prob, inputs, targets, opt=None):
                     block_args[key] = torch.zeros((len(m.search_space[key]),))
                     block_args[key][option_index] = 1.0
                     
-                    if opt == True:
+                    if short_name == True:
                         query_keys.append(f'{key[0]}{option_value}')
-                    elif opt is None:
+                    elif short_name is None:
                         query_keys.append(f'{key}{option_value}')
                 query_key      = '-'.join(query_keys)
                 
@@ -194,9 +194,9 @@ def calculate_zero_cost_map(model, arch_prob, inputs, targets, opt=None):
                 args_connection_idx = comb_list_index[option[search_keys.index('connection')]]
                 
                 block_args['connection'] = torch.zeros((len(m.search_space['connection']),))
-                
-                for connection_idx in args_connection_idx:
-                    block_args['connection'][connection_idx] = 1.
+                block_args['connection'][args_connection_idx] = 1.0
+                # for connection_idx in args_connection_idx:
+                #     block_args['connection'][connection_idx] = 1.
                 
                 block_args['gamma'] = torch.zeros((len(m.search_space['gamma']),))
                 block_args['gamma'][option[search_keys.index('gamma')]] = 1.0

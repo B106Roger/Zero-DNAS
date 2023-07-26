@@ -192,7 +192,7 @@ def main():
 
 
     # initialize flops look-up table
-    model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE), search_space=SEARCH_SPACES)
+    model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE), search_space=SEARCH_SPACES, signature=args.model)
 
     # create optimizer and resume from checkpoint
     if args.resume_theta_training:
