@@ -88,8 +88,18 @@ __C.UPDATE_METHOD='ver1'
 # __C.AUGMENTATION = CN()
 
     
-          
-            
+
+#########################################
+# IZDNAS Configuration
+#########################################
+__C.STAGE2 = CN()
+__C.STAGE2.EPOCHS = 40
+__C.STAGE2.HARDWARE_FREEZE_EPOCHS = 0
+__C.STAGE2.TEMPERATURE = CN()
+__C.STAGE2.TEMPERATURE.INIT  = 5.0
+__C.STAGE2.TEMPERATURE.FINAL = 5.0
+
+
     
 
           

@@ -32,7 +32,7 @@ PROXY_DICT = {
 }
 
 PROXY_MAP_DICT = {
-    'naswot': naswot.calculate_zero_cost_map,
+    'naswot': naswot.calculate_zero_cost_map2,
 }
 
 
@@ -346,10 +346,10 @@ def analyze_map_func2(arch_info_list, title, img_filename, text_filename):
     # arch1    = arch_info1['arch']
     # arch2    = arch_info2['arch']
     
-    fig, axes = plt.subplots(len(arch_info_list[0]))
+    fig, axes = plt.subplots(8)
     fig.suptitle(title)
     f = open(text_filename, 'w')
-    for stage_id in range(len(arch_info_list[0])):
+    for stage_id in range(8):
         score_list = []
         rank_list = []
         

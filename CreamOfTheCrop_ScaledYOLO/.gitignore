@@ -4,3 +4,4 @@ __pycache__/
 *.json
 data/
 experiments/workspace
+experiment_results/old*

@@ -1,1 +1,4 @@
 python tools/train.py --cfg experiments/configs/train/train.yaml --data voc.yaml --hyp hyp.scratch.yaml --device 6,7 --exp_name test
+
+python ./tools/train_zdnas.py --cfg config/search/train_zdnas.yaml --data ./config/dataset/voc_dnas.yaml --hyp ./config/training/hyp.zerocost.yaml --model config/model/Search-YOLOv4-CSP.yaml --device 6 --exp_name EXP_NAME --nas DNAS-50 --zc naswot
+python ./tools/train_izdnas.py --cfg config/search/train_izdnas.yaml --data ./config/dataset/voc_dnas.yaml --hyp ./config/training/hyp.zerocost.yaml --model config/model/Search-YOLOv4-CSP.yaml --device 6 --exp_name EXP_NAME --nas DNAS-50 --zc naswot

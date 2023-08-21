@@ -3,13 +3,12 @@ import itertools
 import torch
 import copy
 import torch.nn as nn
-from mish_cuda import MishCuda as Mish
 import numpy as np
-# from torch.nn import ReLU as Mish
-# from torch.nn import LeakyReLU as Mish
+from mish_cuda import MishCuda as Mish
+from torch.nn import ReLU, LeakyReLU, SiLU
 
 from lib.utils.synflow import synflow, sum_arr
-from lib.models.blocks.yolo_blocks import Conv, Bottleneck
+from lib.models.blocks.yolo_blocks import Conv, Bottleneck, DEFAULT_ACTIVATION, V4_DEFAULT_ACTIVATION, V7_DEFAULT_ACTIVATION
 
 
 TYPE = None # ZeroDNAS_Egor or DNAS or ZeroCost
@@ -62,6 +61,22 @@ def get_algorithm_type():
         raise ValueError(f"Didn't Initialize the TYPE parameter.")    
     return TYPE    
 
+def init_value(temperature, value_count, init_type, total_step=0.3):
+    if init_type == 'uniform':
+        return torch.nn.Parameter(torch.zeros((value_count, )))
+    elif init_type == 'step':
+        base_count = np.float32(value_count)
+        step_count = np.arange(value_count).astype(np.float32).sum()
+        
+        step = total_step / step_count
+        base = (1.0 - total_step) / base_count
+        prob = np.ones((value_count,)) * base + np.arange(value_count) *step
+        
+        tmp_log = temperature * np.log(prob)
+        res = tmp_log - tmp_log.mean()
+        
+        return torch.nn.Parameter(torch.tensor(res))
+
 class GeneralOpeartor_Search(nn.Module):
     def __init__(self):
         super(GeneralOpeartor_Search, self).__init__()
@@ -108,7 +123,6 @@ class GeneralOpeartor_Search(nn.Module):
         arch = {'block_name' : self.block_name}
         return arch
 
-    
 class BottleneckCSP_Search(GeneralOpeartor_Search):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     # Modify from    https://github.com/chiahuilin0531/ScaledYOLOv4
@@ -174,7 +188,7 @@ class BottleneckCSP_Search(GeneralOpeartor_Search):
                 depth_vals = self.search_space['n_bottlenecks'] # args['n_bottlenecks_val']
                 depth_dist = args['n_bottlenecks']
                 
-                m_out = self.cv1(x) * mask
+                m_out = self.cv1(x, mask)
                 if SHOW_FEATURE_STATS: feature_inspection(m_out, 'self.cv1')
                 aggregate_feature = 0
                 depth_idx = 0
@@ -184,26 +198,32 @@ class BottleneckCSP_Search(GeneralOpeartor_Search):
                         if SHOW_FEATURE_STATS: feature_inspection(m_out, f'depth={depth} prob={depth_dist[depth_idx]}')
                         depth_idx += 1
                     if depth == depth_vals[-1]: break
-                    m_out = self.m[depth](m_out) * mask
+                    m_out = self.m[depth](m_out, mask)
                 m_out = aggregate_feature
+                
             else:
-                m_out = self.cv1(x)   * mask
+                m_out = self.cv1(x, mask)
                 for m in self.m:
-                    m_out = m(m_out) * mask
+                    m_out = m(m_out, mask)
         else:
-            m_out = self.cv1(x)   * mask
-            m_out = self.m(m_out) * mask
+            m_out = self.cv1(x, mask)
+            for m in self.m:
+                m_out = m(m_out, mask)
         
         y1 = self.cv3(m_out) * mask
-        if SHOW_FEATURE_STATS: feature_inspection(m_out, 'self.cv3')
         y2 = self.cv2(x) * mask
+        if SHOW_FEATURE_STATS: feature_inspection(m_out, 'self.cv3')
+    
         return self.cv4(self.act(self.bn(torch.cat((y1, y2), dim=1))))
 
-    def init_arch_parameter(self, device='cpu'):
+    def init_arch_parameter(self, device='cpu', temperature=5.0, init_type='uniform'):
         arch = super(BottleneckCSP_Search, self).init_arch_parameter(device)
         for key, candidates in self.search_space.items():
             length    = len(candidates)
-            arch[key] = torch.nn.Parameter(torch.ones((length, )) / length).to(device)
+            # arch[key] = torch.nn.Parameter(torch.ones((length, )) / length).to(device)
+            arch[key] = init_value(temperature, length, init_type=init_type).to(device)
+            
+
         return arch
     
 class BottleneckCSP2_Search(GeneralOpeartor_Search):
@@ -260,8 +280,8 @@ class BottleneckCSP2_Search(GeneralOpeartor_Search):
                 depth_vals = self.search_space['n_bottlenecks'] # args['n_bottlenecks_val']
                 depth_dist = args['n_bottlenecks']
                 
-                x1 = m_out = self.cv1(x) * mask
-                if SHOW_FEATURE_STATS:feature_inspection(m_out, 'self.cv1')
+                x1 = m_out = self.cv1(x, mask)
+                # if SHOW_FEATURE_STATS:feature_inspection(m_out, 'self.cv1')
                 aggregation = 0
                 depth_idx = 0
                 for depth in range(len(self.m) + 1):
@@ -269,17 +289,18 @@ class BottleneckCSP2_Search(GeneralOpeartor_Search):
                         aggregation += m_out * depth_dist[depth_idx]
                         depth_idx += 1
                     if depth == depth_vals[-1]: break
-                    if SHOW_FEATURE_STATS:feature_inspection(m_out, f'Bef depth={depth} mask={mask.sum()}')
-                    m_out = self.m[depth](m_out) * mask
-                    if SHOW_FEATURE_STATS: feature_inspection(m_out, f'Aft depth={depth} c_={self.m[depth].c_} g={self.m[depth].g} add={self.m[depth].add}')
+                    # if SHOW_FEATURE_STATS:feature_inspection(m_out, f'Bef depth={depth} mask={mask.sum()}')
+                    m_out = self.m[depth](m_out, mask)
+                    # if SHOW_FEATURE_STATS: feature_inspection(m_out, f'Aft depth={depth} c_={self.m[depth].c_} g={self.m[depth].g} add={self.m[depth].add}')
                 m_out = aggregation
             else:
-                x1 = m_out = self.cv1(x) * mask
+                x1 = m_out = self.cv1(x, mask)
                 for m in self.m:
-                    m_out = m(m_out) * mask
+                    m_out = m(m_out, mask)
         else:
-            x1 = m_out = self.cv1(x) * mask
-            m_out = self.m(m_out) * mask
+            x1 = m_out = self.cv1(x, mask)
+            for m in self.m:
+                m_out = m(m_out, mask)
             
         y1 = m_out
         y2 = self.cv2(x1) * mask
@@ -297,11 +318,12 @@ class BottleneckCSP2_Search(GeneralOpeartor_Search):
         #     y2 = self.cv2(x1) * mask
         #     return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
 
-    def init_arch_parameter(self, device='cpu'):
+    def init_arch_parameter(self, device='cpu', temperature=5.0, init_type='uniform'):
         arch = super(BottleneckCSP2_Search, self).init_arch_parameter()
         for key, candidates in self.search_space.items():
             length    = len(candidates)
-            arch[key] = torch.nn.Parameter(torch.ones((length, )) / length).to(device)
+            # arch[key] = torch.nn.Parameter(torch.ones((length, )) / length).to(device)
+            arch[key] = init_value(temperature, length, init_type=init_type).to(device)
         return arch
 
 class Composite_Search(GeneralOpeartor_Search):
@@ -320,7 +342,7 @@ class Composite_Search(GeneralOpeartor_Search):
             
         return out
     
-    def init_arch_parameter(self, device='cpu'):
+    def init_arch_parameter(self, device='cpu', temperature=1.0):
         arch = super(Composite_Search).init_arch_parameter(device)
         arch['operators'] = []
         for operator in self.operators:
@@ -388,13 +410,13 @@ class ELAN_Search(GeneralOpeartor_Search):
             if 'connection' in args.keys():
                 n_connection_list = torch.flip(args['connection'], dims=(0,))
         
-        y1 = self.cv1(x) * mask
-        y2 = self.cv2(x) * mask
+        y1 = self.cv1(x, mask)
+        y2 = self.cv2(x, mask)
         out = y2
 
         feat_list = [y1, y2]
         for idx, m in enumerate(self.m):
-            out = m(out) * mask 
+            out = m(out, mask) 
             feat_list.append(out * n_connection_list[idx])
 
         return self.cv3(torch.cat(feat_list, dim=1))
@@ -437,11 +459,14 @@ class ELAN_Search(GeneralOpeartor_Search):
         
         return results, keys
 
-    def init_arch_parameter(self, device='cpu'):
+    def init_arch_parameter(self, device='cpu', temperature=5.0, init_type='uniform'):
         arch = super(ELAN_Search, self).init_arch_parameter()
         for key, candidates in self.search_space.items():
             length    = len(candidates)
-            arch[key] = torch.nn.Parameter(torch.ones((length, ))).to(device)
+            if key == 'connection':
+                arch[key] = torch.nn.Parameter(torch.ones((length, ))).to(device)
+            else:
+                arch[key] = init_value(temperature, length, init_type=init_type).to(device)
         return arch
 
 
@@ -482,7 +507,7 @@ class ELAN2_Search(GeneralOpeartor_Search):
         if args is not None:
             if 'gamma' in args.keys():
                 mask1 = 0.0
-                mask2 = 1.0
+                mask2 = 0.0
                 for i in range(len(self.channel_masks1)):
                     mask1 += self.channel_masks1[i] *  args['gamma'][i]
                     mask2 += self.channel_masks2[i] *  args['gamma'][i]
@@ -493,13 +518,13 @@ class ELAN2_Search(GeneralOpeartor_Search):
             if 'connection' in args.keys():
                 n_connection_list = torch.flip(args['connection'], dims=(0,))
             
-        y1 = self.cv1(x) * mask2
-        y2 = self.cv2(x) * mask2
+        y1 = self.cv1(x, mask2)
+        y2 = self.cv2(x, mask2)
         out = y2
 
         feat_list = [y1, y2]
         for idx, m in enumerate(self.m):
-            out = m(out) * mask1 
+            out = m(out, mask1) 
             feat_list.append(out * n_connection_list[idx])
 
         return self.cv3(torch.cat(feat_list, dim=1))
@@ -522,7 +547,6 @@ class ELAN2_Search(GeneralOpeartor_Search):
                 results.append(list(subset))
         return results
 
-
     def generate_options(self):
         """
         for option in results:
@@ -543,9 +567,12 @@ class ELAN2_Search(GeneralOpeartor_Search):
         
         return results, keys
 
-    def init_arch_parameter(self, device='cpu'):
+    def init_arch_parameter(self, device='cpu', temperature=5.0, init_type='uniform'):
         arch = super(ELAN2_Search, self).init_arch_parameter()
         for key, candidates in self.search_space.items():
             length    = len(candidates)
-            arch[key] = torch.nn.Parameter(torch.ones((length, ))).to(device)
+            if key == 'connection':
+                arch[key] = torch.nn.Parameter(torch.ones((length, ))).to(device)
+            else:
+                arch[key] = init_value(temperature, length, init_type=init_type).to(device)
         return arch

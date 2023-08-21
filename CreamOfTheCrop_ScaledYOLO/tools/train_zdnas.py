@@ -288,7 +288,7 @@ def main():
     ##################################################################    
     from lib.zero_proxy import naswot
     PROXY_DICT = {
-        'naswot': lambda arch_prob: naswot.calculate_zero_cost_map(model, arch_prob, imgs, targets, None),
+        'naswot': lambda arch_prob: naswot.calculate_zero_cost_map2(model, arch_prob, imgs, targets, None),
     }
     if args.zc not in PROXY_DICT.keys():
         raise Value(f"key {args.zc} is not registered in PROXY_DICT")

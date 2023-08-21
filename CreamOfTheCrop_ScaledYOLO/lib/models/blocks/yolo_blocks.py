@@ -3,10 +3,21 @@ import math
 import torch
 import torch.nn as nn
 from mish_cuda import MishCuda as Mish
-# from torch.nn import ReLU as Mish
-# from torch.nn import LeakyReLU as Mish
+from torch.nn import ReLU, LeakyReLU, SiLU
 import copy
 from lib.utils.synflow import synflow, sum_arr
+
+# Importance Note !!!!!!!!!!!
+# When Using Bottleneck CSP, we should set both DEFAULT_ACTIVATION and V4_DEFAULT_ACTIVATION to Mish
+# When Using ELAN,           we should set both DEFAULT_ACTIVATION and V4_DEFAULT_ACTIVATION to SiLU
+
+
+# A callable object that could return a activation instance
+DEFAULT_ACTIVATION    = Mish # Default Model => Conv
+V4_DEFAULT_ACTIVATION = Mish # BottleneckCSP BottleneckCSP2,
+V7_DEFAULT_ACTIVATION = SiLU # RepConv, ELAN, ELAN2
+
+
 
 TYPE = 'DNAS' # ZeroDNAS_Egor or DNAS or ZeroCost
 
@@ -57,10 +68,10 @@ class Conv(nn.Module):
         # if TYPE=='ZeroDNAS_Egor' or TYPE=='ZeroCost':
         if False:
             self.bn = nn.GroupNorm(1, c2)
-            self.act = nn.ReLU() if act else nn.Identity()
+            self.act = DEFAULT_ACTIVATION() if act else nn.Identity()
         elif TYPE=='DNAS':
             self.bn = nn.BatchNorm2d(c2)
-            self.act = Mish() if act else nn.Identity()
+            self.act = DEFAULT_ACTIVATION() if act else nn.Identity()
         else:
             raise ValueError(f'Invalid Type: {TYPE}')
         self.block_name = f'cn_k{k}_s{s}'
@@ -69,8 +80,8 @@ class Conv(nn.Module):
     def get_block_name(self):
         return self.block_name
 
-    def forward(self, x):
-        return self.act(self.bn(self.conv(x)))
+    def forward(self, x, masks=1.0):
+        return self.act(self.bn(self.conv(x)) * masks)
 
     def fuseforward(self, x):
         return self.act(self.conv(x))
@@ -83,10 +94,10 @@ class ConvNP(nn.Module):
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
         if TYPE=='ZeroDNAS_Egor' or TYPE=='ZeroCost':
             self.bn = nn.GroupNorm(1, c2)
-            self.act = nn.ReLU() if act else nn.Identity()
+            self.act = DEFAULT_ACTIVATION() if act else nn.Identity()
         elif TYPE=='DNAS':
             self.bn = nn.BatchNorm2d(c2)
-            self.act = Mish() if act else nn.Identity()
+            self.act = DEFAULT_ACTIVATION() if act else nn.Identity()
         else:
             raise ValueError(f'Invalid Type: {TYPE}')
         self.block_name = f'cn_k{k}_s{s}'
@@ -114,8 +125,8 @@ class Bottleneck(nn.Module):
     def get_block_name(self):
         return self.block_name
 
-    def forward(self, x):
-        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+    def forward(self, x, mask=1.0):
+        return x + self.cv2(self.cv1(x, mask), mask) if self.add else self.cv2(self.cv1(x, mask), mask)
 
 
 class Concat(nn.Module):
@@ -142,7 +153,7 @@ class BottleneckCSP(nn.Module):
         self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
         self.cv4 = Conv(2 * c_, c2, 1, 1)
         self.bn = nn.BatchNorm2d(2 * c_)  # applied to cat(cv2, cv3)
-        self.act = Mish()
+        self.act = V4_DEFAULT_ACTIVATION()
         self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
         self.block_name = f'bottlecsp_num{n}_gamma{e}'
         
@@ -234,7 +245,7 @@ class BottleneckCSP2(nn.Module):
         self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
         self.cv3 = Conv(2 * c_, c2, 1, 1)
         self.bn = nn.BatchNorm2d(2 * c_) 
-        self.act = Mish()
+        self.act = V4_DEFAULT_ACTIVATION()
         self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
         self.block_name = f'bottlecsp2_num{n}_gamma{e}'
         
@@ -319,10 +330,10 @@ class SPPCSP(nn.Module):
         self.cv6 = Conv(c_, c_, 3, 1)
         if TYPE=='ZeroDNAS_Egor' or TYPE=='ZeroCost':
             self.bn = nn.GroupNorm(1, 2 * c_) 
-            self.act = nn.ReLU()
+            self.act = V4_DEFAULT_ACTIVATION()
         elif TYPE=='DNAS':
             self.bn = nn.BatchNorm2d(2 * c_) 
-            self.act = Mish()
+            self.act = V4_DEFAULT_ACTIVATION()
         else:
             raise ValueError(f'Invalid Type: {TYPE}')
 
@@ -883,7 +894,7 @@ class RepConv(nn.Module):
 
         padding_11 = autopad(k, p) - k // 2
 
-        self.act = nn.SiLU() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
+        self.act = V7_DEFAULT_ACTIVATION() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
 
         if deploy:
             self.rbr_reparam = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=True)

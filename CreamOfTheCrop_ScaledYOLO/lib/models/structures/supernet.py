@@ -105,7 +105,7 @@ class SuperNet(nn.Module):
 
         self.blocks, self.save = parse_model(model_args, ch=[in_chans])  # model, savelist, ch_out
         
-        self.thetas_main = self.init_arch_parameter(device)
+        self.thetas_main = self.init_arch_parameter(device, self.temperature, 'uniform')
         print(self.thetas_main)
         
         # Build strides, anchors
@@ -309,14 +309,14 @@ class SuperNet(nn.Module):
                             recurse=True):
                         yield param
 
-    ########################################################################
+    ################################################
     # Sampling Method
-    ########################################################################
-    def init_arch_parameter(self, device):
+    ################################################
+    def init_arch_parameter(self, device, temperature, init_type):
         arch = []
         for block_id, block in enumerate(self.blocks):
             if 'Search' in block.__class__.__name__:
-                arch.append(block.init_arch_parameter(device))
+                arch.append(block.init_arch_parameter(device, temperature, init_type))
         return arch
 
     def get_optimizer_parameter(self):
@@ -691,10 +691,10 @@ class SuperNet(nn.Module):
             res.append(block_arch)
         return res
     
-    #########################################################################
+    ################################################
     # Utility Function
     # WeiJie Implementation
-    ######################################################################### 
+    ################################################ 
     def calculate_flops_new(self, architecture_info, flops_dict):
         """
         Params

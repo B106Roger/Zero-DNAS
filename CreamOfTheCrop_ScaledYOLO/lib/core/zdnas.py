@@ -26,7 +26,7 @@ from datetime import datetime
 PROXY_DICT = {
     # 'snip'  :  snip.calculate_snip,
     # 'synflow': synflow.calculate_synflow,
-    'naswot' : naswot.calculate_zero_cost_map,
+    'naswot' : naswot.calculate_zero_cost_map2,
     # 'grasp': grasp.calculate_grasp
 }
 

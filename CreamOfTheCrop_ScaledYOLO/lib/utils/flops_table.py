@@ -295,10 +295,10 @@ class FlopsEst(object):
             self.save_flops_dict(flops_filename)
             self.save_params_dict(params_filename)
             
-            print(f"Largest  SubNet  Params: { self.params_dict['largest_arch']:8.4f}  |  FLOPS: { self.flops_dict['largest_arch']/1e3:8.4f}G ")
-            print(f"Smallest SubNet  Params: {self.params_dict['smallest_arch']:8.4f}  |  FLOPS: {self.flops_dict['smallest_arch']/1e3:8.4f}G ")
-            print(f"SuperNet GFLOPS = Fixed + Choices = {self.flops_dict['flops_fixed']/1e3:8.4f} + {self.flops_dict['flops_dynamic']/1e3:8.4f} = {self.flops_dict['flops_supernet']/1e3:8.4f}")
-            print(f"SuperNet MParam = Fixed + Choices = {  self.params_dict['params_fixed']:8.4f} + {  self.params_dict['params_dynamic']:8.4f} = {self.params_dict['params_supernet']:8.4f}")
+        print(f"Largest  SubNet  Params: { self.params_dict['largest_arch']:8.4f}  |  FLOPS: { self.flops_dict['largest_arch']/1e3:8.4f}G ")
+        print(f"Smallest SubNet  Params: {self.params_dict['smallest_arch']:8.4f}  |  FLOPS: {self.flops_dict['smallest_arch']/1e3:8.4f}G ")
+        print(f"SuperNet GFLOPS = Fixed + Choices = {self.flops_dict['flops_fixed']/1e3:8.4f} + {self.flops_dict['flops_dynamic']/1e3:8.4f} = {self.flops_dict['flops_supernet']/1e3:8.4f}")
+        print(f"SuperNet MParam = Fixed + Choices = {  self.params_dict['params_fixed']:8.4f} + {  self.params_dict['params_dynamic']:8.4f} = {self.params_dict['params_supernet']:8.4f}")
 
 
     # return params (M)

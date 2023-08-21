@@ -193,7 +193,7 @@ def main():
 
 
     # initialize flops look-up table
-    model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE), search_space=SEARCH_SPACES)
+    model_est = FlopsEst(model, input_shape=(None, 3, cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE), search_space=SEARCH_SPACES, signature=args.model)
 
     # create optimizer and resume from checkpoint
     if args.resume_theta_training:
@@ -275,7 +275,7 @@ def main():
     try:
         print('task_flops', TASK_FLOPS)
         # Aging Evolution
-        test_zc_map_param(args.zc, model, dataloader_weight, optimizer, cfg, device=device, task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
+        test_zc_map_evolve(args.zc, model, dataloader_weight, optimizer, cfg, device=device, task_flops=TASK_FLOPS, task_params=TASK_PARAMS,
             cycles=1000, est=model_est, logger=logger, output_dir=output_dir)
         # Export Model Config
         # for topk, arch_info in enumerate(best_archs):

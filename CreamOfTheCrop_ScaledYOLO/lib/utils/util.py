@@ -393,7 +393,7 @@ def export_thetas(thetas, model, origin_config, output_file):
                     export_config[part][depth][3][1] = int(discrete_thetas[theta_idx]['gamma'] * base_cn)
                 theta_idx += 1
                 
-            if m.__class__ in [Detect, IDetect]:
+            if m in [Detect, IDetect]:
                 arg.pop()
     
     export_config['csp_gammas'] = gamma_list

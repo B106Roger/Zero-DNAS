@@ -14,12 +14,14 @@ matplotlib.rc('font', size=15)
 
 parser = argparse.ArgumentParser(description='Plot the theta distribution according to the serach result')
 parser.add_argument('--exp_name', type=str, required=True)
+parser.add_argument('--type',     type=str, default='zcmap_ema', help='zcmap_ema or zcmap or train')
+
 args = parser.parse_args()
 
 experiment_name = args.exp_name 
 experiment_path = Path(f'experiments/workspace/train/{experiment_name}/')
-thetas_path = experiment_path / 'train.txt'
-thetas_gif_path = experiment_path / 'history_thetas.mp4'
+thetas_path = experiment_path / (args.type + '.txt')
+thetas_gif_path = experiment_path / (args.type + '.mp4')
 experiment_graphs = Path('.')
 
 def analyze_map_func2(arch_info_list, title, img_filename):
@@ -94,6 +96,32 @@ def analyze_map_func2(arch_info_list, title, img_filename):
 def arch_generator(filename):
     f= open(filename, 'r')
     for idx, item in enumerate(f):
+        # if idx % 2 == 1:
+        if True:
+            idx_string, *content = item.split(' ')
+            
+            # Parse Epoch and Iteration
+            idx_string = idx_string[1:-1]
+            _, epoch_idx, iter_idx = idx_string.split('-')
+            epoch_idx, iter_idx = int(epoch_idx), int(iter_idx)
+            
+            # Parse Architecture Prob
+            arch_prob_raw = ''.join(content)
+            arch_prob_raw = arch_prob_raw.replace("gamma", "g").replace("n_bottlenecks", "n")
+            arch_prob_raw = arch_prob_raw.replace("inf", "0")
+            
+
+            print(epoch_idx, iter_idx)
+            if (epoch_idx==1 and iter_idx <= 50): continue
+            
+            arch = eval(arch_prob_raw)
+            # if iter_idx % 200 == 0:
+            if True:
+                yield (epoch_idx, iter_idx), arch
+
+def arch_generator2(filename):
+    f= open(filename, 'r')
+    for idx, item in enumerate(f):
         if idx % 2 == 1:
             idx_string, *content = item.split(' ')
             
@@ -105,20 +133,32 @@ def arch_generator(filename):
             # Parse Architecture Prob
             arch_prob_raw = ''.join(content)
             arch_prob_raw = arch_prob_raw.replace("gamma", "g").replace("n_bottlenecks", "n")
-            arch = eval(arch_prob_raw)
+            arch_prob_raw = arch_prob_raw.replace("inf", "0")
             
+
+            print(epoch_idx, iter_idx)
+            if (epoch_idx==1 and iter_idx <= 50): continue
+            
+            arch = eval(arch_prob_raw)
             if iter_idx % 200 == 0:
+            # if True:
                 yield (epoch_idx, iter_idx), arch
-    
-# with imageio.get_writer(thetas_gif_path, mode='I', duration=100) as writer:
-with imageio.get_writer(thetas_gif_path, fps=10) as writer:
-    for idx_info, arch in arch_generator(thetas_path):
-        print(f'idx_string={idx_info}')
-        fig = analyze_map_func2([{'naswot_map': arch}], f'{idx_info[0]}-{idx_info[1]}', None)
-        fig.tight_layout()
-        fig.canvas.draw()
-        data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-        data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+
+
+if __name__ == '__main__':
+    if 'zcmap' in args.type:   gen = arch_generator(thetas_path)
+    elif 'train' in args.type: gen = arch_generator2(thetas_path)
+    else: raise ValueError(f'invalid args.type={args.type}')
         
-        writer.append_data(data)
-        # if idx_info[0] == 10: break 
+    # with imageio.get_writer(thetas_gif_path, mode='I', duration=100) as writer:
+    with imageio.get_writer(thetas_gif_path, fps=10) as writer:
+        for idx_info, arch in gen:
+            print(f'idx_string={idx_info}')
+            fig = analyze_map_func2([{'naswot_map': arch}], f'{idx_info[0]}-{idx_info[1]}', None)
+            fig.tight_layout()
+            fig.canvas.draw()
+            data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+            data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+            
+            writer.append_data(data)
+            # if idx_info[0] == 2: break 
