@@ -2,7 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
-from mish_cuda import MishCuda as Mish
+# from mish_cuda import MishCuda as Mish
 from lib.utils.synflow import synflow, sum_arr
 
 
@@ -18,7 +18,7 @@ class Conv(nn.Module):
         super(Conv, self).__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
         self.bn = nn.BatchNorm2d(c2)
-        self.act = Mish() if act else nn.Identity()
+        self.act = nn.ReLU() if act else nn.Identity()
         self.block_name = f'cn_k{k}_s{s}'
 
 
@@ -37,7 +37,7 @@ class ConvNP(nn.Module):
         super(ConvNP, self).__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
         self.bn = nn.BatchNorm2d(c2)
-        self.act = Mish() if act else nn.Identity()
+        self.act = nn.ReLU() if act else nn.Identity()
         self.block_name = f'cn_k{k}_s{s}'
 
 
@@ -92,7 +92,7 @@ class BottleneckCSP(nn.Module):
         self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
         self.cv4 = Conv(2 * c_, c2, 1, 1)
         self.bn = nn.BatchNorm2d(2 * c_)  # applied to cat(cv2, cv3)
-        self.act = Mish()
+        self.act = nn.ReLU()
         self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
         self.block_name = f'bottlecsp_num{n}_gamma{e}'
 
@@ -179,7 +179,7 @@ class BottleneckCSP2(nn.Module):
         self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
         self.cv3 = Conv(2 * c_, c2, 1, 1)
         self.bn = nn.BatchNorm2d(2 * c_) 
-        self.act = Mish()
+        self.act = nn.ReLU()
         self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
         self.block_name = f'bottlecsp2_num{n}_gamma{e}'
 
@@ -250,7 +250,7 @@ class SPPCSP(nn.Module):
         self.cv5 = Conv(4 * c_, c_, 1, 1)
         self.cv6 = Conv(c_, c_, 3, 1)
         self.bn = nn.BatchNorm2d(2 * c_) 
-        self.act = Mish()
+        self.act = nn.ReLU()
         self.cv7 = Conv(2 * c_, c2, 1, 1)
         self.block_name = f'sppcsp'
 
