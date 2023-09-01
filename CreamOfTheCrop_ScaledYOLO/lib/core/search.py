@@ -19,7 +19,7 @@ from lib.utils.util import *
 from lib.utils.general import compute_loss, test, plot_images, is_parallel, build_foreground_mask, compute_sensitive_loss
 from lib.utils.kd_utils import compute_loss_KD
 from lib.utils.synflow import sum_arr_tensor
-from lib.zero_proxy import snip, synflow, naswot, grasp
+from lib.zero_proxy import snip, synflow, naswot, grasp, zico
 
 
 
@@ -27,7 +27,8 @@ PROXY_DICT = {
     'snip'  :  snip.calculate_snip,
     'synflow': synflow.calculate_synflow,
     'naswot' : naswot.calculate_wot,
-    'grasp': grasp.calculate_grasp
+    'grasp': grasp.calculate_grasp,
+    'zico': zico.calculate_zico
 }
 
 def sample_arch(search_space):
@@ -344,11 +345,20 @@ def train_epoch_zero_cost_EA(proxy_name, model, dataloader, optimizer, cfg, devi
     ### 0st. Select Dataset
     ##################################################################    
     loader = enumerate(dataloader)
-    for iter_idx, (uimgs, targets, paths, _) in loader:
-        # imgs = (batch=2, 3, height, width)
-        imgs     = uimgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
-        targets  = targets.to(device)
-        if iter_idx == 2: break
+    for iter_idx, (uimgs, utargets, paths, _) in loader:
+        # print(f"iter: {iter_idx}")
+        if proxy_name == 'zico':
+            if iter_idx == 0:
+                imgs = []
+                targets = []                
+            imgs.append(uimgs.to(device, non_blocking=True).float() / 255.0)
+            targets.append(utargets.to(device))
+            if iter_idx == 2: break #zero-cost batch=2*size 8
+        else:
+            # imgs = (batch=2, 3, height, width)
+            imgs     = uimgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
+            targets  = utargets.to(device)
+            if iter_idx == 2: break
 
     
     ##############################################

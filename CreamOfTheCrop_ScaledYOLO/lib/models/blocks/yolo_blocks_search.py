@@ -3,7 +3,7 @@ import itertools
 import torch
 import copy
 import torch.nn as nn
-from mish_cuda import MishCuda as Mish
+# from mish_cuda import MishCuda as Mish
 # from torch.nn import ReLU as Mish
 from lib.utils.synflow import synflow, sum_arr
 from lib.models.blocks.yolo_blocks import Conv, Bottleneck
@@ -23,7 +23,7 @@ NORMALIZATION = {
 ACTIVATION = {
     'relu': nn.ReLU,
     'leakyrelu': nn.LeakyReLU,
-    'mish': Mish,
+    # 'mish': Mish,
 }
 
 def feature_inspection(x, prefix=''):
@@ -109,7 +109,7 @@ class GeneralOpeartor_Search(nn.Module):
 class BottleneckCSP_Search(GeneralOpeartor_Search):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     # Modify from    https://github.com/chiahuilin0531/ScaledYOLOv4
-    def __init__(self, c1, c2, gamma_space, bottleneck_space, shortcut=True, g=1, bn='batchnorm', act='mish'): #, bn='groupnorm', act='relu'):  # ch_in, ch_out, number, shortcut, groups, expansion
+    def __init__(self, c1, c2, gamma_space, bottleneck_space, shortcut=True, g=1, bn='batchnorm', act='relu'): #, bn='groupnorm', act='relu'):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(BottleneckCSP_Search, self).__init__()
         # self.gamma_space      = gamma_space
         # self.bottleneck_space = bottleneck_space
@@ -202,7 +202,7 @@ class BottleneckCSP_Search(GeneralOpeartor_Search):
     
 class BottleneckCSP2_Search(GeneralOpeartor_Search):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
-    def __init__(self, c1, c2, gamma_space, bottleneck_space, shortcut=False, g=1, bn='batchnorm', act='mish'): #bn='groupnorm', act='relu'):  # ch_in, ch_out, number, shortcut, groups, expansion
+    def __init__(self, c1, c2, gamma_space, bottleneck_space, shortcut=False, g=1, bn='batchnorm', act='relu'): #bn='groupnorm', act='relu'):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(BottleneckCSP2_Search, self).__init__()
         # self.gamma_space      = gamma_space
         # self.bottleneck_space = bottleneck_space

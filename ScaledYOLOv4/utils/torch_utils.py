@@ -134,11 +134,13 @@ def model_info(model, verbose=False, resolution = (224, 224)):
             name = name.replace('module_list.', '')
             print('%5g %40s %9s %12g %20s %10.3g %10.3g' %
                   (i, name, p.requires_grad, p.numel(), list(p.shape), p.mean(), p.std()))
-
+    # print(model.device())
     # try:  # FLOPS
+    # device = next(model.parameters()).device
     if True:
         from thop import profile
         flops = profile(deepcopy(model), inputs=(torch.zeros(1, 3, resolution[0], resolution[1]),), verbose=False)[0] / 1E9 * 2
+        # flops = profile(deepcopy(model), inputs=(torch.zeros(1, 3, resolution[0], resolution[1]).to(device),), verbose=False)[0] / 1E9 * 2
         fs = f', {flops:.1f} GFLOPS  Resolution: {resolution}'   # 640x640 FLOPS
     # except:
     #     fs = ''

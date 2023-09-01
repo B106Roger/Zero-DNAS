@@ -4,7 +4,7 @@ import math
 import torch
 import torch.nn as nn
 
-from mish_cuda import MishCuda as Mish
+# from mish_cuda import MishCuda as Mish
 
 
 def autopad(k, p=None):  # kernel, padding
@@ -25,7 +25,7 @@ class Conv(nn.Module):
         super(Conv, self).__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
         self.bn = nn.BatchNorm2d(c2)
-        self.act = Mish() if act else nn.Identity()
+        self.act = nn.ReLU() if act else nn.Identity()
 
     def forward(self, x):
         return self.act(self.bn(self.conv(x)))
@@ -61,7 +61,7 @@ class BottleneckCSP(nn.Module):
             self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
             self.cv4 = Conv(2 * c_, c2, 1, 1)
             self.bn = nn.BatchNorm2d(2 * c_)  # applied to cat(cv2, cv3)
-            self.act = Mish()
+            self.act = nn.ReLU()
             self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
         elif self.search_type == 1:
             c_h = int(c2 * e)        # hidden channels. extract deep feature.
@@ -71,7 +71,7 @@ class BottleneckCSP(nn.Module):
             self.cv3 = nn.Conv2d(c_h, c_h, 1, 1, bias=False)
             self.cv4 = Conv(c2, c2, 1, 1)
             self.bn = nn.BatchNorm2d(c2)  # applied to cat(cv2, cv3)
-            self.act = Mish()
+            self.act = nn.ReLU()
             self.m = nn.Sequential(*[Bottleneck(c_h, c_h, shortcut, g, e=1.0) for _ in range(n)])
 
     def forward(self, x):
@@ -92,7 +92,7 @@ class BottleneckCSP2(nn.Module):
             self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
             self.cv3 = Conv(2 * c_, c2, 1, 1)
             self.bn = nn.BatchNorm2d(2 * c_) 
-            self.act = Mish()
+            self.act = nn.ReLU()
             self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
 
 
@@ -146,7 +146,7 @@ class SPPCSP(nn.Module):
         self.cv5 = Conv(4 * c_, c_, 1, 1)
         self.cv6 = Conv(c_, c_, 3, 1)
         self.bn = nn.BatchNorm2d(2 * c_) 
-        self.act = Mish()
+        self.act = nn.ReLU()
         self.cv7 = Conv(2 * c_, c2, 1, 1)
 
     def forward(self, x):
@@ -485,7 +485,7 @@ class ConvSqu(nn.Module):
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
         super(ConvSqu, self).__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
-        self.act = Mish() if act else nn.Identity()
+        self.act = nn.ReLU() if act else nn.Identity()
 
     def forward(self, x):
         return self.act(self.conv(x))
