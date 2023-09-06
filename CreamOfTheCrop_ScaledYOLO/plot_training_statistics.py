@@ -16,16 +16,24 @@ parser = argparse.ArgumentParser(description='Plot the theta distribution accord
 parser.add_argument('--type',     type=str, default='zcmap_ema', help='zcmap_ema or zcmap or train')
 args = parser.parse_args()
 
-
+pre_fix = 'valid_exp'
+# EXP_NAME_LIST = [
+#     '0821_izdnas-t3-every_act3-S42',
+#     '0821_izdnas-t3-every_act3-S43',
+#     '0821_izdnas-t3-every_act3-S44',
+#     '0821_izdnas-t3-every_act3-S45',
+# ]
+# EXP_NAME_LIST = [
+#     '0818_izdnas-every_act3-S42',
+#     '0818_izdnas-every_act3-S43',
+#     '0818_izdnas-every_act3-S44',
+#     '0818_izdnas-every_act3-S45',
+# ]
 EXP_NAME_LIST = [
-    '0818_izdnas-every_act3-S42',
-    '0818_izdnas-every_act3-S43',
-    '0818_izdnas-every_act3-S44',
-    '0818_izdnas-every_act3-S45',
-    
+    f'0823_izdnas-t1-every_act3-S{seed}' for seed in range(42, 46)
 ]
 
-experiment_name = [Path(f'experiments/workspace/train/{exp_name}/') / (args.type + '.txt') for exp_name in EXP_NAME_LIST]
+experiment_name = [Path(f'experiments/workspace/{pre_fix}/{exp_name}/') / (args.type + '.txt') for exp_name in EXP_NAME_LIST]
 
 
 def analyze_map_func2(arch_info_list, title, img_filename):

@@ -3,6 +3,15 @@ from tqdm import tqdm
 import json
 
 
+################################################################################################
+# Reference                                                                                    #
+# https://github.com/SamsungLabs/zero-cost-nas/blob/main/foresight/pruners/measures/synflow.py #
+################################################################################################
+# Note                                                                                         #
+#                                                                                              #
+################################################################################################
+
+
 #convert params to their abs. Keep sign for converting it back.
 @torch.no_grad()
 def linearize(model):

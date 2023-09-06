@@ -756,8 +756,12 @@ class SuperNet(nn.Module):
                         args_connection_idx = comb_list_index[option[search_keys.index('connection')]]
                         prob = 1.0
                         
+                        selected_con   = args_connection_idx
+                        unselected_con = list(set(comb_list_index[-1]) - set(args_connection_idx))
+                        
                         prob *= soft_mask_variables['gamma'][option[search_keys.index('gamma')]]
-                        prob *= torch.prod(soft_mask_variables['connection'][args_connection_idx])
+                        prob *= torch.prod(      soft_mask_variables['connection'][selected_con])
+                        prob *= torch.prod(1.0 - soft_mask_variables['connection'][unselected_con])
                         # for connection_idx in args_connection_idx:
                         #     prob *= soft_mask_variables['connection'][connection_idx]
                         query_key = f'cn{args_cn}-con{str(args_connection)}'
@@ -833,8 +837,12 @@ class SuperNet(nn.Module):
                         args_connection_idx = comb_list_index[option[search_keys.index('connection')]]
                         prob = 1.0
                         
+                        selected_con   = args_connection_idx
+                        unselected_con = list(set(comb_list_index[-1]) - set(args_connection_idx))
+                        
                         prob *= soft_mask_variables['gamma'][option[search_keys.index('gamma')]]
-                        prob *= torch.prod(soft_mask_variables['connection'][args_connection_idx])
+                        prob *= torch.prod(      soft_mask_variables['connection'][selected_con])
+                        prob *= torch.prod(1.0 - soft_mask_variables['connection'][unselected_con])
                         # for connection_idx in args_connection_idx:
                         #     prob *= soft_mask_variables['connection'][connection_idx]
                         query_key = f'cn{args_cn}-con{str(args_connection)}'
@@ -954,8 +962,12 @@ class SuperNet(nn.Module):
                         args_connection_idx = comb_list_index[option[search_keys.index('connection')]]
                         prob = 1.0
                         
+                        selected_con   = args_connection_idx
+                        unselected_con = list(set(comb_list_index[-1]) - set(args_connection_idx))
+                        
                         prob *= soft_mask_variables['gamma'][option[search_keys.index('gamma')]]
-                        prob *= torch.prod(soft_mask_variables['connection'][args_connection_idx])
+                        prob *= torch.prod(      soft_mask_variables['connection'][selected_con])
+                        prob *= torch.prod(1.0 - soft_mask_variables['connection'][unselected_con])
                         # for connection_idx in args_connection_idx:
                         #     prob *= soft_mask_variables['connection'][connection_idx]
                         query_key = f'cn{args_cn}-con{str(args_connection)}'
@@ -975,6 +987,112 @@ class SuperNet(nn.Module):
                 overall_zc += layer_zc
         
         return overall_zc
+
+    def calculate_utility(self, architecture_info, flops_dict, params_dict, zc_map):
+        """
+        Params
+        ------
+        architecutre_info : 
+        flops_dict : type,
+        Returns
+        -------
+        overall_flops: torch.tensor(1,), M-FLOPS
+        """
+        SHOW_FLOP_STAT = False
+        keys = sorted(self.search_space.keys())
+        architecture = architecture_info['arch']
+        architecture_type = architecture_info['arch_type']
+        
+        current_theta = 0
+        overall_flops = 0
+        overall_params= 0
+        overall_zc    = 0
+        for block_idx, block in enumerate(self.blocks):         
+            block_idx = str(block_idx)
+            # [Discrete Mode] use architecture to sample subnetwork to do inference
+            if architecture_type == 'discrete':
+                raise ValueError("Not Implement")
+
+            # [Continuous Mode] use architecture distribtuion and weighted-sum their output to do inference
+            elif architecture_type == 'continuous':
+                layer_flops = 0.0
+                layer_params= 0.0
+                layer_zc    = 0.0
+                if block.__class__ in [BottleneckCSP_Search, BottleneckCSP2_Search]:
+                    # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
+                    soft_mask_variables = architecture[current_theta]
+                    options, search_keys = block.generate_options()
+                    
+                    for option in options:
+                        prob = 1.0
+                        query_keys = []
+                        for key_idx, key in enumerate(search_keys):
+                            option_index = option[key_idx]
+                            option_value = block.search_space[key][option_index]
+                            option_prob  = soft_mask_variables[key][option_index]
+                            query_keys.append(f'{key}{option_value}')
+                            prob *= option_prob
+                            
+                        
+                        query_key      = '-'.join(query_keys)
+                        choice_flops = flops_dict[block_idx][query_key]
+                        choice_params = params_dict[block_idx][query_key]
+                        choice_zc = zc_map[current_theta][query_key]
+                        
+                        layer_flops += choice_flops * prob
+                        layer_params+= choice_params* prob
+                        layer_zc    += choice_zc    * prob
+                        
+                        if SHOW_FLOP_STAT: print(f'[FLOPS opt={query_keys}] flops={choice_flops} prob={prob} mut={choice_flops * prob}')
+                        
+
+                    current_theta += 1
+                elif block.__class__ in [ELAN_Search, ELAN2_Search]:
+                    # soft_mask_variables = nn.functional.gumbel_softmax(self.thetas[current_theta](), self.temperature)
+                    soft_mask_variables = architecture[current_theta]
+                    options, search_keys = block.generate_options()
+                    comb_list       = block._connection_combination(block.search_space['connection'])
+                    comb_list_index = block._connection_combination(block.search_space['connection'], index=True)
+
+                    for option in options:
+                        args_cn             = int(block.search_space['gamma'     ][option[search_keys.index('gamma')]] * block.base_cn)
+                        args_connection     = comb_list[option[search_keys.index('connection')]]
+                        args_connection_idx = comb_list_index[option[search_keys.index('connection')]]
+                        prob = 1.0
+                        
+                        selected_con   = args_connection_idx
+                        unselected_con = list(set(comb_list_index[-1]) - set(args_connection_idx))
+                        
+                        prob *= soft_mask_variables['gamma'][option[search_keys.index('gamma')]]
+                        prob *= torch.prod(      soft_mask_variables['connection'][selected_con])
+                        prob *= torch.prod(1.0 - soft_mask_variables['connection'][unselected_con])
+                        
+                        query_key = f'cn{args_cn}-con{str(args_connection)}'
+
+                        choice_flops = flops_dict[block_idx][query_key]
+                        choice_params = params_dict[block_idx][query_key]
+                        choice_zc = zc_map[current_theta][query_key]
+
+                        layer_flops += choice_flops * prob
+                        layer_params+= choice_params* prob
+                        layer_zc    += choice_zc    * prob
+
+                        if SHOW_FLOP_STAT: print(f'[FLOPS opt={query_key}] flops={choice_flops} prob={prob} mut={choice_flops * prob}')
+
+                    current_theta += 1
+                else:
+                    layer_flops = flops_dict[block_idx]['0']
+                    layer_params= params_dict[block_idx]['0']
+                
+                overall_flops += layer_flops
+                overall_params+= layer_params
+                overall_zc    += layer_zc
+                
+                if SHOW_FLOP_STAT: print(f'[FLOPS {block_idx}]={layer_flops}')
+                
+        
+        return overall_flops, overall_params, overall_zc
+    
 
     #########################################################################
     # ZeroDNAS Function

@@ -12,11 +12,14 @@ anchors:
 search_space:
   ELAN_Search:
     gamma_space: [0.75, 1.0, 1.25]
-    connection_space: [-1,-2,-3,-4,-5,-6]
+    # connection_space: [-1,-2,-3,-4,-5,-6]
+    connection_space: [0,1,2,3,4]
+
 
   ELAN2_Search:
     gamma_space: [0.75, 1.0, 1.25]
-    connection_space: [-1,-2,-3,-4,-5,-6]
+    # connection_space: [-1,-2,-3,-4,-5,-6]
+    connection_space: [0,1,2,3,4]
 
 
 # yolov7 backbone

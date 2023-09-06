@@ -72,6 +72,7 @@ def parse_config_args(exp_name):
     parser.add_argument('--model',type=str, default='config/model/Search-YOLOv4-CSP.yaml', help='model path')
     parser.add_argument('--exp_name', type=str, default='exp', help="name of experiments")
     parser.add_argument('--nas', default='', type=str, help='NAS-Search-Space and hardware constraint combination')
+    parser.add_argument('--pre_weights', type=str, default='', help='pretrained model weights')
     parser.add_argument('--zc',  default='', type=str, help='Zero Cost Metrics Type')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     ###################################################################################
@@ -88,10 +89,6 @@ def parse_config_args(exp_name):
     parser.add_argument('--collect-synflows', type=int, default=0, help='Sample a lot of different architectures with corresponding synflows, if not 0 then samples specified number and exits the programm')
     parser.add_argument('--resume-theta-training', default='', type=str, help='load pretrained thetas')
     ###################################################################################
-    
-    
-
-    
     args = parser.parse_args()
     print('args', args)
 
@@ -122,6 +119,9 @@ task_dict = {
 
 def main():
     args, cfg = parse_config_args('super net training')
+    #######################################
+    # Model Config
+    #######################################
     with open(args.model ) as f:
         model_args   = yaml.load(f, Loader=yaml.FullLoader)
     search_space = model_args['search_space']

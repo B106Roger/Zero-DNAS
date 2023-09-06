@@ -403,12 +403,27 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
             zc_map = zc_func(model, arch_prob, *zero_cost_data_pair)
             f.write(f'[{ni}-{epoch}-{iter_idx:04d}] {str(zc_map)}\n')  
             f.close() 
-
+            ########################################################################
+            ########################################################################
+            
             f = open(Path(logdir) / 'zcmap_ema.txt', 'a')
+            ############################################
+            ema.ema.train()
+            for p in ema.ema.parameters():
+                p.requires_grad_(True)
+            ############################################
+            
             arch_prob = ema.ema.module.softmax_sampling(temperature, detach=True) if is_ddp else ema.ema.softmax_sampling(temperature, detach=True)
             zc_map = zc_func(ema.ema, arch_prob, *zero_cost_data_pair)
             f.write(f'[{ni}-{epoch}-{iter_idx:04d}] {str(zc_map)}\n')  
             f.close() 
+            
+            ############################################
+            ema.ema.zero_grad()
+            for p in ema.ema.parameters():
+                p.requires_grad_(False)
+            ema.ema.eval()
+            ############################################
             
             model.train()
             ema.ema.train()
@@ -463,17 +478,20 @@ def train_epoch_zdnas(epoch, model, zc_func, theta_optimizer, cfg, device, task_
             'arch': gumbel_prob
         }
          
-        zc_score = nn_model.calculate_zc(architecture_info, zc_map)
+        output_flops, output_params, zc_score = nn_model.calculate_utility(architecture_info, est.flops_dict, est.params_dict, zc_map)
+        output_flops /= 1e3
+        # zc_score = nn_model.calculate_zc(architecture_info, zc_map)
         # output_flops  = nn_model.calculate_flops_new (architecture_info, est.flops_dict) / 1e3        
-        output_params = nn_model.calculate_params_new(architecture_info, est.params_dict)
+        # output_params = nn_model.calculate_params_new(architecture_info, est.params_dict)
         
         #########################################
         # Calculate Loss
         #########################################
-        # squared_error_flops = (output_flops - task_flops) ** 2
+        squared_error_flops = (output_flops - task_flops) ** 2
         # squared_error_params = (output_params - task_params) ** 2
-        output_flops,  squared_error_flops  =  flop_mean_square_error(nn_model, est, architecture_info, task_flops)
-        # output_params, squared_error_params = param_mean_square_error(nn_model, est, architecture_info, task_params)
+        # output_flops,  squared_error_flops  =  flop_mean_square_error(nn_model, est, architecture_info, task_flops)
+        
+
         
         flops_loss  = squared_error_flops * alpha
         # params_loss = squared_error_params * beta
@@ -488,7 +506,7 @@ def train_epoch_zdnas(epoch, model, zc_func, theta_optimizer, cfg, device, task_
         loss.backward()
         theta_optimizer.step()
         
-        
+
         # Update Average Meter
         avg_params.update(output_params.item(), 1)
         avg_flops.update(output_flops.item(), 1)
@@ -535,4 +553,188 @@ def train_epoch_zdnas(epoch, model, zc_func, theta_optimizer, cfg, device, task_
             
     logger.info(s)
     return nn_model.thetas_main
+
+
+def train_epoch_ezdnas(epoch, model, zc_func_list, theta_optimizer, cfg, device, task_flops, 
+                     est=None, logger=None, local_rank=0, prefix='', logdir='./'):
+    batch_size = cfg.DATASET.BATCH_SIZE
+    is_ddp = is_parallel(model)
+    nn_model = model.module if is_ddp else model
     
+    naive_model  = model.module if is_ddp else model
+    search_space = naive_model.search_space
+    temperature = nn_model.temperature
+    
+    # Average Meter
+    avg_params = AverageMeter()
+    avg_flops  = AverageMeter()
+    avg_floss  = AverageMeter()
+    avg_zcloss = AverageMeter()
+    total      = AverageMeter()
+    
+    
+    alpha = 0.005 # 0.01 # 0.03     # for flops_loss
+    beta  = 0.010                   # for params_loss
+    gamma = 0.030 # 0.01            # for zero cost loss
+    omega = 0.010                   # for depth loss
+    
+    alpha = 0.0 if epoch < cfg.STAGE2.HARDWARE_FREEZE_EPOCHS else alpha
+    print(f'Gamma(ZC loss weight)={gamma:.3f} Alpha(FLOP loss weight)={alpha:.3f}')  
+
+    num_iter = 2880
+    if local_rank in [-1, 0]:
+        logger.info(('%10s' * 8) % ('Epoch', 'gpu_num', 'Param', 'FLOPS', 'f_loss', 'zc_loss', 'total', 'temp'))
+        pbar = tqdm(range(num_iter), total=num_iter, bar_format='{l_bar}{bar:5}{r_bar}')  # progress bar
+    
+    f=open(os.path.join(logdir, 'train.txt'), 'a')
+    for iter_idx in pbar:
+        if iter_idx % 50 == 0: 
+            arch_prob = model.module.softmax_sampling(temperature, detach=True) if is_ddp else model.softmax_sampling(temperature, detach=True)
+            zc_map_list = {}
+            for zc_name, zc_func in zc_func_list.items():
+                print(zc_name)
+                zc_map = zc_func(arch_prob)
+                zc_map_list[zc_name] = zc_map
+            f.write(f'[{epoch}-{iter_idx:04d}] {str(arch_prob)}\n')
+            f.write(f'[{epoch}-{iter_idx:04d}] {str(zc_map_list["naswot"])}\n')
+        
+        ##########################################################
+        # Calculate Basic Information (FLOPS, Params, ZC_Score)
+        ##########################################################
+        gumbel_prob = model.module.gumbel_sampling(temperature) if is_ddp else model.gumbel_sampling(temperature)
+        architecture_info = {
+            'arch_type': 'continuous',
+            'arch': gumbel_prob
+        }
+        
+        
+        zc_scores = dict([(zc_name, nn_model.calculate_zc(architecture_info, zc_map)) for zc_name, zc_map in zc_map_list.items()])
+        # output_flops  = nn_model.calculate_flops_new (architecture_info, est.flops_dict) / 1e3
+        output_params = nn_model.calculate_params_new(architecture_info, est.params_dict)
+        
+        #########################################
+        # Calculate Loss
+        #########################################
+        output_flops,  squared_error_flops  =  flop_mean_square_error(nn_model, est, architecture_info, task_flops)
+        # output_params, squared_error_params = param_mean_square_error(nn_model, est, architecture_info, task_params)
+        
+        flops_loss  = squared_error_flops * alpha
+        # params_loss = squared_error_params * beta
+        zc_loss     = [zc_score * gamma for zc_name, zc_score in zc_scores.items()]
+        
+        if iter_idx % 50 == 0: 
+            zc_loss_dict= dict([(zc_name, zc_score) for zc_name, zc_score in zc_scores.items()])
+            for key, zc_loss_value in zc_loss_dict.items():
+                # theta_zero_grad(gumbel_prob)
+                
+                gradient1 = torch.autograd.grad(zc_loss_value, model.get_optimizer_parameter(), retain_graph=True)
+
+                print(f'{key} Norm {zc_loss_value}')
+                
+                theta_grad_norm_v2(gradient1)
+
+        
+        loss = sum(zc_loss) + flops_loss
+
+        #########################################
+        # Calculate Loss
+        #########################################
+        theta_optimizer.zero_grad()
+        loss.backward()
+        theta_optimizer.step()
+        
+        
+        # Update Average Meter
+        avg_params.update(output_params.item(), 1)
+        avg_flops.update(output_flops.item(), 1)
+        avg_floss.update(squared_error_flops.item(), 1)
+        # avg_zcloss.update(zc_scores.values()[0].item(), 1)
+        total.update(loss.item(), 1)
+        
+        # Print
+        if local_rank in [-1, 0]:
+            ni = iter_idx
+            mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
+            s = ('%10s' * 2 + '%10.4g' * 6) % (
+                '%3d/%3d' % (epoch,cfg.EPOCHS), mem, avg_params.avg, avg_flops.avg, avg_floss.avg, \
+                    avg_zcloss.avg, total.avg, temperature)
+
+            date_time = datetime.now().strftime('%m/%d %I:%M:%S %p') + ' | '
+            pbar.set_description(date_time + s)
+            
+    ##############################################################
+    # Print Continuous FLOP Value
+    ##############################################################
+    arch_prob = model.module.softmax_sampling(temperature) if is_ddp else model.softmax_sampling(temperature)
+    architecture_info = {
+        'arch_type': 'continuous',
+        'arch': arch_prob
+    }
+    output_flops  = model.calculate_flops_new (architecture_info, est.flops_dict) / 1e3
+    output_params = model.calculate_params_new(architecture_info, est.params_dict)
+    zc_scores = [nn_model.calculate_zc(architecture_info, zc_map) for zc_name, zc_map in zc_map_list.items()]
+    print(f'Continuous Current FLOPS: {output_flops:.2f}G   Params: {output_params:.2f}M   ZC: {zc_scores}')
+    
+    ##############################################################
+    # Print Discrete FLOP Value
+    ##############################################################
+    arch_prob = model.module.discretize_sampling() if is_ddp else model.discretize_sampling()
+    architecture_info = {
+        'arch_type': 'continuous',
+        'arch': arch_prob
+    }
+    output_flops  = model.calculate_flops_new (architecture_info, est.flops_dict) / 1e3
+    output_params = model.calculate_params_new(architecture_info, est.params_dict)
+    zc_scores = [nn_model.calculate_zc(architecture_info, zc_map) for zc_name, zc_map in zc_map_list.items()]
+    print(f'Discrete Current FLOPS: {output_flops:.2f}G   Params: {output_params:.2f}M   ZC: {zc_scores}')
+            
+    logger.info(s)
+    return nn_model.thetas_main
+
+
+##############################
+# Arch Prob utils
+##############################
+def theta_zero_grad(arch_prob):
+    for stage in arch_prob:
+        for key, prob in stage.items():
+            if key == 'block_name': continue
+            print(key, prob)
+            prob.zero_grad()
+
+def theta_grad_norm(arch_prob):
+    print(f'{"key":20s}|', end='')
+    for i in range(len(arch_prob)):
+        stage_str = f'stage{i+1}'
+        print(f"{stage_str:8s} ", end='')
+    print(f"{'average':8s}")
+        
+    keys = arch_prob[0].keys()        
+    for key in keys:
+        if key == 'block_name': continue
+        print(f'{key:20s}|', end='')
+        norm_list = []
+        for stage in arch_prob:
+            norm = torch.norm(stage[key].grad, p=2).detach().cpu().numpy()
+            norm_list.append(norm)
+            print(f'{norm:8.4f} ',end='')
+        print(f'{np.mean(norm_list):8.4f} ')
+        
+        
+def theta_grad_norm_v2(gradients):
+    n_search = 2
+    print(f'{"key":20s}|', end='')
+    for i in range(len(gradients)//n_search):
+        stage_str = f'stage{i}'
+        print(f"{stage_str:>10s} ", end='')
+    print(f"{'average':>8s}")
+        
+    for s_idx in range(n_search):
+        head_str = f'search{s_idx}_{len(gradients[s_idx])}'
+        print(f'{head_str:20s}|', end='')
+        norm_list = []
+        for i in range(len(gradients)//n_search):
+            norm = torch.norm(gradients[i*n_search+s_idx], p=2).detach().cpu().numpy()
+            norm_list.append(norm)
+            print(f'{norm:10.4f} ',end='')
+        print(f'{np.mean(norm_list):8.4f} ')

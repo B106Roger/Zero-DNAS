@@ -363,10 +363,10 @@ def preprocess_block2(model):
         if module_class in white_list: # relu white list
             if current_parent_module is not None:
                 module.register_forward_hook(create_search_forward_hook(current_parent_module))
-                print(f'[Register  Search Hook] {str(type(model.blocks[block_id-1])):30s} {name:20s}')
+                # print(f'[Register  Search Hook] {str(type(model.blocks[block_id-1])):30s} {name:20s}')
             else:
                 module.register_forward_hook(forward_hook)
-                print(f'[Register Forward Hook] {str(type(model.blocks[block_id-1])):30s} {name:20s}')
+                # print(f'[Register Forward Hook] {str(type(model.blocks[block_id-1])):30s} {name:20s}')
 
 def calculate_zero_cost_map2(model, arch_prob, inputs, targets=None, short_name=None):
     global PREPROCESSED_BLOCK, REGISTER_LIST

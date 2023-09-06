@@ -216,6 +216,63 @@ class BottleneckCSP_Search(GeneralOpeartor_Search):
     
         return self.cv4(self.act(self.bn(torch.cat((y1, y2), dim=1))))
 
+    def get_masked_params(self, args=None):
+        """
+        Parameters
+        ----------
+        x: float32, (b, c, w, h)
+        args: dict
+            'gamma_dist': float32, (num_of_gamma_choices,)
+        """
+        target_mask = self.channel_masks.shape[1]
+        target_depth = len(self.m)
+        if args is not None:
+            if 'gamma' in args.keys() and args['gamma'] is not None:
+                mask = self.channel_masks[args['gamma'].argmax()]
+                # Find the index of content equal to one
+                target_one_index= torch.where(mask == 1)[0]
+                # Find the largest index
+                target_mask = target_one_index[-1] + 1
+        
+            if 'n_bottlenecks' in args.keys() and args['n_bottlenecks'] is not None:
+                depth_vals = self.search_space['n_bottlenecks'] # args['n_bottlenecks_val']
+                depth_dist = args['n_bottlenecks']
+                target_depth = depth_vals[depth_dist.argmax()]
+        else:
+            raise ValueError("args should not be none")
+        
+
+        
+        result = []
+        mask_func = []
+        # (out, in, k, k)
+        result.append(list(self.cv1.conv.parameters())[0])
+        mask_func.append(lambda x: x[:target_mask])
+        
+        result.append(list(self.cv2.parameters())[0])
+        mask_func.append(lambda x: x[:target_mask])
+        
+        result.append(list(self.cv3.parameters())[0])
+        mask_func.append(lambda x: x[:target_mask, :target_mask])
+        
+        # cv4 special implementation
+        cv4_conv_param = list(self.cv4.parameters())[0]
+        base = cv4_conv_param.shape[1] // 2
+        
+        result.append(cv4_conv_param)
+        mask_func.append(lambda x: x[:, :target_mask])
+        
+        result.append(cv4_conv_param)
+        mask_func.append(lambda x: x[:, base:base+target_mask])
+        
+        for block in self.m[:target_depth]:
+            extend_p = [p for p in block.parameters() if len(p.shape) == 4 ]
+            result.extend(extend_p)
+            mask_func.extend([lambda x: x[:target_mask, :target_mask]] * len(extend_p))
+            
+        return result, mask_func
+
+
     def init_arch_parameter(self, device='cpu', temperature=5.0, init_type='uniform'):
         arch = super(BottleneckCSP_Search, self).init_arch_parameter(device)
         for key, candidates in self.search_space.items():
@@ -326,6 +383,58 @@ class BottleneckCSP2_Search(GeneralOpeartor_Search):
             arch[key] = init_value(temperature, length, init_type=init_type).to(device)
         return arch
 
+    def get_masked_params(self, args=None):
+        """
+        Parameters
+        ----------
+        x: float32, (b, c, w, h)
+        args: dict
+            'gamma_dist': float32, (num_of_gamma_choices,)
+        """
+        target_mask = self.channel_masks.shape[1]
+        target_depth = len(self.m)
+        if args is not None:
+            if 'gamma' in args.keys() and args['gamma'] is not None:
+                mask = self.channel_masks[args['gamma'].argmax()]
+                # Find the index of content equal to one
+                target_one_index= torch.where(mask == 1)[0]
+                # Find the largest index
+                target_mask = target_one_index[-1] + 1
+                
+        
+            if 'n_bottlenecks' in args.keys() and args['n_bottlenecks'] is not None:
+                depth_vals = self.search_space['n_bottlenecks'] # args['n_bottlenecks_val']
+                depth_dist = args['n_bottlenecks']
+                target_depth = depth_vals[depth_dist.argmax()]
+        else:
+            raise ValueError("args should not be none")
+        
+
+        result = []
+        mask_func = []
+        # (out, in, k, k)
+        result.append(list(self.cv1.conv.parameters())[0])
+        mask_func.append(lambda x: x[:target_mask])
+        
+        result.append(list(self.cv2.parameters())[0])
+        mask_func.append(lambda x: x[:target_mask, :target_mask])
+        
+        # cv3 special implementation
+        cv3_conv_param = list(self.cv3.parameters())[0]
+        base = cv3_conv_param.shape[1] // 2
+        result.append(cv3_conv_param)
+        mask_func.append(lambda x: x[:, :target_mask])
+        
+        result.append(cv3_conv_param)
+        mask_func.append(lambda x: x[:, base:base+target_mask])
+        
+        for block in self.m[:target_depth]:
+            extend_p = [p for p in block.parameters() if len(p.shape) == 4 ]
+            result.extend(extend_p)
+            mask_func.extend([lambda x: x[:target_mask, :target_mask]] * len(extend_p))
+        
+        return result, mask_func
+
 class Composite_Search(GeneralOpeartor_Search):
     def __init__(self, operators):
         super(Composite_Search, self).__init__()
@@ -373,11 +482,10 @@ class ELAN_Search(GeneralOpeartor_Search):
         self.search_space['gamma']         = copy.deepcopy(gamma_space)
         self.search_space['connection']    = copy.deepcopy(connection_space)
         self.base_cn = cn
-        connection    =  -np.min(connection_space)
         cn            =   (np.max(gamma_space) * self.base_cn).astype(np.int32)
         
         c_ = (len(connection_space) + 2) * cn
-        n  = len(connection_space)
+        n  = max(connection_space) + 1
         # print(c2, cn, connection_space, n)
 
         self.cv1 = Conv(c1, cn, 1, 1)
@@ -408,16 +516,16 @@ class ELAN_Search(GeneralOpeartor_Search):
                     mask += self.channel_masks[i] *  args['gamma'][i]
                 mask = mask.reshape(1,-1,1,1)
             if 'connection' in args.keys():
-                n_connection_list = torch.flip(args['connection'], dims=(0,))
+                n_connection_list = args['connection']
         
         y1 = self.cv1(x, mask)
         y2 = self.cv2(x, mask)
         out = y2
 
         feat_list = [y1, y2]
-        for idx, m in enumerate(self.m):
+        for block_idx, m in enumerate(self.m):
             out = m(out, mask) 
-            feat_list.append(out * n_connection_list[idx])
+            feat_list.append(out * n_connection_list[block_idx])
 
         return self.cv3(torch.cat(feat_list, dim=1))
 
@@ -477,11 +585,10 @@ class ELAN2_Search(GeneralOpeartor_Search):
         self.search_space['gamma']         = copy.deepcopy(gamma_space)
         self.search_space['connection']    = copy.deepcopy(connection_space)
         self.base_cn = cn        
-        connection    =  -np.min(connection_space)
         cn            =   (np.max(gamma_space) * self.base_cn).astype(np.int32)
         
         c_ = (len(connection_space) + 4) * cn
-        n  = len(connection_space)
+        n  = max(connection_space) + 1
         # print(c2, cn, connection_space, n)
 
         self.cv1 = Conv(c1, cn*2, 1, 1)
@@ -516,16 +623,16 @@ class ELAN2_Search(GeneralOpeartor_Search):
                 mask2 = mask2.reshape(1,-1,1,1)
                 
             if 'connection' in args.keys():
-                n_connection_list = torch.flip(args['connection'], dims=(0,))
+                n_connection_list = args['connection']
             
         y1 = self.cv1(x, mask2)
         y2 = self.cv2(x, mask2)
         out = y2
 
         feat_list = [y1, y2]
-        for idx, m in enumerate(self.m):
+        for block_idx, m in enumerate(self.m):
             out = m(out, mask1) 
-            feat_list.append(out * n_connection_list[idx])
+            feat_list.append(out * n_connection_list[block_idx])
 
         return self.cv3(torch.cat(feat_list, dim=1))
 

@@ -382,10 +382,7 @@ def export_thetas(thetas, model, origin_config, output_file):
                 export_config[part][depth][2] = export_config[part][depth][2].replace('_Search','')
                 # Process Block Depth
                 if 'connection' in discrete_thetas[theta_idx].keys():
-                    n_val = min(discrete_thetas[theta_idx]['connection'])
-                    discrete_thetas[theta_idx]['connection'].extend([n_val-1, n_val-2])
                     export_config[part][depth][3].append(discrete_thetas[theta_idx]['connection'])
-                    export_config[part][depth][3].append(-n_val + 2)
                 # Process Block Gamma
                 if 'gamma' in discrete_thetas[theta_idx].keys():
                     gamma_list.append(discrete_thetas[theta_idx]['gamma'])

@@ -29,7 +29,7 @@ except ImportError:
 
 # import models and training functions
 from lib.utils.flops_table import FlopsEst
-from lib.core.izdnas import train_epoch_dnas, train_epoch_dnas_V2, train_epoch_zdnas
+from lib.core.izdnas import train_epoch_dnas, train_epoch_dnas_V2, train_epoch_ezdnas
 from lib.models.structures.supernet import gen_supernet
 from lib.utils.util import convert_lowercase, get_logger, \
     create_optimizer_supernet, create_supernet_scheduler, stringify_theta, write_thetas, export_thetas
@@ -64,7 +64,7 @@ def parse_config_args(exp_name):
     ###################################################################################
     # Commonly Used Parameter !!
     ###################################################################################
-    parser.add_argument('--cfg',  type=str, help='configuration of training hyp')
+    parser.add_argument('--cfg',  type=str, help='configuration of cream')
     parser.add_argument('--data', type=str, default='config/dataset/voc.yaml', help='data.yaml path')
     parser.add_argument('--hyp',  type=str, default='config/dataset/training/hyp.scratch.yaml', help='hyperparameters path, i.e. data/hyp.scratch.yaml')
     parser.add_argument('--model',type=str, default='config/model/Search-YOLOv4-CSP.yaml', help='model path')
@@ -102,7 +102,6 @@ task_dict = {
     'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': None, },
     'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': None, },
     
-    'DNAS-105':     { 'GFLOPS': 105,  'PARAMS': None, },
     'DNAS-70':     { 'GFLOPS': 70,  'PARAMS': None, },
     'DNAS-60':     { 'GFLOPS': 60,  'PARAMS': None, },
     'DNAS-50':     { 'GFLOPS': 50,  'PARAMS': None, },
@@ -118,6 +117,7 @@ task_dict = {
 
 def main():
     args, cfg = parse_config_args('super net training')
+    
     #######################################
     # Model Config
     #######################################
@@ -135,10 +135,12 @@ def main():
     output_dir = os.path.join(cfg.SAVE_PATH, cfg.exp_name)
     config_bakup_dir = os.path.join(output_dir, 'config')
     code_backup_dir  = os.path.join(output_dir, 'code')
+    theta_dir        = 'thetas_weights' # thetas.pt
     model_dir        = os.path.join(output_dir, 'model')
     model_w_dir      = os.path.join(output_dir, 'model_weights')
     
     os.makedirs(model_dir, exist_ok=True)
+    os.makedirs(theta_dir, exist_ok=True)
     os.makedirs(model_w_dir, exist_ok=True)
     config_backup(config_bakup_dir, code_backup_dir, args)
 
@@ -257,25 +259,26 @@ def main():
     if args.local_rank == 0:
         logger.info('Scheduled epochs: %d', num_epochs)
 
-    dataloader_weight, dataset_weight = create_dataloader(train_weight_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
-                                            cache=args.cache_images, rect=args.rect,
-                                            world_size=args.world_size)
-    dataloader_thetas, dataset_thetas = create_dataloader(train_thetas_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
-                                            cache=args.cache_images, rect=args.rect,
-                                            world_size=args.world_size)
-    # dataloader_weight, dataset_weight = create_dataloader(test_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
+    # dataloader_weight, dataset_weight = create_dataloader(train_weight_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
     #                                         cache=args.cache_images, rect=args.rect,
     #                                         world_size=args.world_size)
-    # dataloader_thetas, dataset_thetas = create_dataloader(test_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
+    # dataloader_thetas, dataset_thetas = create_dataloader(train_thetas_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
     #                                         cache=args.cache_images, rect=args.rect,
     #                                         world_size=args.world_size)
+    dataloader_weight, dataset_weight = create_dataloader(test_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
+                                            cache=args.cache_images, rect=args.rect,
+                                            world_size=args.world_size)
+    dataloader_thetas, dataset_thetas = create_dataloader(test_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
+                                            cache=args.cache_images, rect=args.rect,
+                                            world_size=args.world_size)
     for iter_idx, (uimgs, targets, paths, _) in enumerate(dataloader_weight):
         # imgs = (batch=2, 3, height, width)
         imgs     = uimgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
         targets  = targets.to(device)
         
         imgs=imgs[:2]
-        targets = targets[:2]
+        targets=targets[:2]
+        
         if iter_idx == 2: break
 
     mlc = np.concatenate(dataset_weight.labels, 0)[:, 0].max()  # max label class
@@ -341,15 +344,20 @@ def main():
     ##################################################################
     ### Choice a Zero-Cost Method
     ##################################################################    
-    from lib.zero_proxy import naswot, snip
+    from lib.zero_proxy import naswot, snip, synflow
     PROXY_DICT = {
         'naswot': naswot.calculate_zero_cost_map2,
-        'snip': snip.calculate_zero_cost_map
+        'snip':   snip.calculate_zero_cost_map,
+        
     }
     if args.zc not in PROXY_DICT.keys():
         raise Value(f"key {args.zc} is not registered in PROXY_DICT")
     zc_func = PROXY_DICT[args.zc]
-    wot_function = lambda arch_prob: PROXY_DICT[args.zc](model, arch_prob, imgs, targets, None)
+    wot_function_list = {
+        'naswot':  lambda arch_prob: PROXY_DICT['naswot'](model, arch_prob, imgs, targets, None),
+        'snip':    lambda arch_prob: PROXY_DICT['snip'](model, arch_prob, imgs, targets, None),
+        # 'synflow': lambda arch_prob: PROXY_DICT['synflow'](model, arch_prob, imgs, targets, None),
+    }
 
 
     try:
@@ -359,7 +367,7 @@ def main():
         ###########################################
         # Phase1 Pretrained Model Weights
         ###########################################
-        torch.save(ema.ema.state_dict(),   os.path.join(model_w_dir, f'model_init.pt'))
+        torch.save(ema.ema.state_dict(),   os.path.join(output_dir, 'model_weights', f'model_init.pt'))
         if args.pre_weights == '':
             for epoch in range(start_epoch+1, num_epochs+1):
                 model.train()
@@ -403,7 +411,7 @@ def main():
                     
 
                     if epoch % 2 == 0:
-                        torch.save(ema.ema.state_dict(),   os.path.join(model_w_dir, f'ema_pretrained_{epoch}.pt'))
+                        torch.save(ema.ema.state_dict(),   os.path.join(output_dir, 'model_weights', f'ema_pretrained_{epoch}.pt'))
                         
                     # if True:
                     #     ##############################################################
@@ -470,7 +478,7 @@ def main():
         # Phase2 Train Zero-DNAS 
         ###########################################
         for epoch in range(cfg.STAGE2.EPOCHS):
-            best_arch = train_epoch_zdnas(epoch, model, wot_function, theta_optimizer, cfg, 
+            best_arch = train_epoch_ezdnas(epoch, model, wot_function_list, theta_optimizer, cfg, 
                 device=device, task_flops=TASK_FLOPS, est=model_est, logger=logger, logdir=output_dir)
             
             ##############################################################
