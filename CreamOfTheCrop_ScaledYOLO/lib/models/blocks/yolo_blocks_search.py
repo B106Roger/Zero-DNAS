@@ -517,7 +517,7 @@ class ELAN_Search(GeneralOpeartor_Search):
                 mask = mask.reshape(1,-1,1,1)
             if 'connection' in args.keys():
                 n_connection_list = args['connection']
-        
+        # print('[Roger] args', args)
         y1 = self.cv1(x, mask)
         y2 = self.cv2(x, mask)
         out = y2
@@ -572,7 +572,9 @@ class ELAN_Search(GeneralOpeartor_Search):
         for key, candidates in self.search_space.items():
             length    = len(candidates)
             if key == 'connection':
-                arch[key] = torch.nn.Parameter(torch.ones((length, ))).to(device)
+                init_val = torch.zeros((length, ))
+                init_val[-1] = 1.5
+                arch[key] = torch.nn.Parameter(init_val).to(device)
             else:
                 arch[key] = init_value(temperature, length, init_type=init_type).to(device)
         return arch
@@ -624,7 +626,7 @@ class ELAN2_Search(GeneralOpeartor_Search):
                 
             if 'connection' in args.keys():
                 n_connection_list = args['connection']
-            
+        # print('[Roger] args', args)
         y1 = self.cv1(x, mask2)
         y2 = self.cv2(x, mask2)
         out = y2
@@ -679,7 +681,9 @@ class ELAN2_Search(GeneralOpeartor_Search):
         for key, candidates in self.search_space.items():
             length    = len(candidates)
             if key == 'connection':
-                arch[key] = torch.nn.Parameter(torch.ones((length, ))).to(device)
+                init_val = torch.zeros((length, ))
+                init_val[-1] = 1.5
+                arch[key] = torch.nn.Parameter(init_val).to(device)
             else:
                 arch[key] = init_value(temperature, length, init_type=init_type).to(device)
         return arch

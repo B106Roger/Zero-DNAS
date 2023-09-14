@@ -54,6 +54,8 @@ def config_backup(config_bakup_dir, code_backup_dir, args):
     shutil.copy('lib/core/train.py',                      os.path.join(code_backup_dir, 'core_train.py'))
     shutil.copy(f'{__file__}',                            os.path.join(code_backup_dir, os.path.basename(__file__)))
     shutil.copy('lib/models/structures/supernet.py',      os.path.join(code_backup_dir, 'supernet.py'))
+    shutil.copy('lib/zero_proxy/naswot.py',               os.path.join(code_backup_dir, 'naswot.py'))
+    
     shutil.copy('lib/models/blocks/yolo_blocks.py',       os.path.join(code_backup_dir, 'yolo_blocks.py'))
     shutil.copy('lib/models/blocks/yolo_blocks_search.py',os.path.join(code_backup_dir, 'yolo_blocks_search.py'))
     shutil.copy('lib/models/builders/build_supernet.py',  os.path.join(code_backup_dir, 'build_supernet.py'))
@@ -103,6 +105,13 @@ task_dict = {
     'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': None, },
     
     'DNAS-105':     { 'GFLOPS': 105,  'PARAMS': None, },
+    'DNAS-104':     { 'GFLOPS': 104,  'PARAMS': None, },
+    'DNAS-103':     { 'GFLOPS': 103,  'PARAMS': None, },
+    
+    'DNAS-102':     { 'GFLOPS': 102,  'PARAMS': None, },
+    
+    'DNAS-80':     { 'GFLOPS': 80,  'PARAMS': None, },
+    
     'DNAS-70':     { 'GFLOPS': 70,  'PARAMS': None, },
     'DNAS-60':     { 'GFLOPS': 60,  'PARAMS': None, },
     'DNAS-50':     { 'GFLOPS': 50,  'PARAMS': None, },
@@ -466,9 +475,19 @@ def main():
         else:
             model.load_state_dict(torch.load(args.pre_weights))
 
+        
         ###########################################
         # Phase2 Train Zero-DNAS 
         ###########################################
+        arch_prob = model.module.softmax_sampling() if is_ddp else model.softmax_sampling()
+        arch_raw  = model.module.thetas_main if is_ddp else model.thetas_main
+        with open(os.path.join(output_dir, 'thetas.txt'), 'a') as f:
+            arch_str=str(stringify_theta(arch_prob, normalize=False))                
+            f.write(f'Init Prob: ' + arch_str +'\n')
+        with open(os.path.join(output_dir, 'thetas_raw.txt'), 'a') as f:
+            raw_arch_str=str(stringify_theta(arch_raw, normalize=False))
+            f.write(f'Init Raw:  ' + raw_arch_str +'\n')
+                
         for epoch in range(cfg.STAGE2.EPOCHS):
             best_arch = train_epoch_zdnas(epoch, model, wot_function, theta_optimizer, cfg, 
                 device=device, task_flops=TASK_FLOPS, est=model_est, logger=logger, logdir=output_dir)
@@ -486,9 +505,14 @@ def main():
             # 
             ##############################################################
             arch_prob = model.module.softmax_sampling() if is_ddp else model.softmax_sampling()
+            arch_raw  = model.module.thetas_main if is_ddp else model.thetas_main
             with open(os.path.join(output_dir, 'thetas.txt'), 'a') as f:
-                arch_str=str(stringify_theta(arch_prob, normalize=True, temperature=model.temperature))
-                f.write(f'Epoch {epoch}' + arch_str +'\n')
+                arch_str=str(stringify_theta(arch_prob, normalize=False))                
+                f.write(f'Epoch {epoch} Prob: ' + arch_str +'\n')
+            with open(os.path.join(output_dir, 'thetas_raw.txt'), 'a') as f:
+                raw_arch_str=str(stringify_theta(arch_raw, normalize=False))
+                f.write(f'Epoch {epoch} Raw:  ' + raw_arch_str +'\n')
+                
         filename = os.path.join(model_dir, f'phase2_{args.zc}-best_f{TASK_FLOPS}.yaml')
         export_thetas(model.softmax_sampling(detach=True), model, model.model_args, filename)
 

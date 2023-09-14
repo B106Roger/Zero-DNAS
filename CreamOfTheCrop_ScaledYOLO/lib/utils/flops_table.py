@@ -224,6 +224,12 @@ class FlopsEst(object):
                         
                         dimension_list.append(next_spatial_dimension)
                         channel_list.append(out_chs)
+                        
+                        # import thop
+                        # my_size = (1, input_shape[0], input_shape[1]*dimension_factor, input_shape[2]*dimension_factor)
+                        # flops_now = thop.profile(block, inputs=(torch.zeros(my_size),), verbose=False)[0] / 1E9 * 2
+                        # print(f'Comparison {type(block)} Original {flops/1e3:10.6f} Now {flops_now:10.6f} {my_size}')
+                    
                     else:
                         # Params raw value
                         macs, params, next_spatial_dimension = get_model_complexity_info(
@@ -240,7 +246,15 @@ class FlopsEst(object):
                             next_spatial_dimension = (next_spatial_dimension[0] * dimension_factor, next_spatial_dimension[1] * dimension_factor)
                         dimension_list.append(next_spatial_dimension)
                         channel_list.append(out_chs)
-                                        
+                        
+                        # try:
+                        #     import thop
+                        #     my_size = (1, input_shape[0], input_shape[1]*dimension_factor, input_shape[2]*dimension_factor)
+                        #     flops_now = thop.profile(block, inputs=(torch.zeros(my_size),), verbose=False)[0] / 1E9 * 2
+                        #     print(f'Comparison {type(block)} Original {flops/1e3:10.6f} Now {flops_now:10.6f} {my_size}')
+                        # except:
+                        #     pass
+                          
                     # Store the flop and param for each choices
                     self.flops_fixed  += flops
                     self.params_fixed += params

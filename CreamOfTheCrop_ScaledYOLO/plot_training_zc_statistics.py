@@ -53,7 +53,7 @@ def parse_config_args(exp_name):
     ###################################################################################
     # Commonly Used Parameter !!
     ###################################################################################
-    parser.add_argument('--cfg',  type=str, default='config/search/exp.yaml',           help='configuration of cream')
+    parser.add_argument('--cfg',  type=str, default='config/search/exp_v4.yaml',           help='configuration of cream')
     parser.add_argument('--data', type=str, default='config/dataset/voc_dnas.yaml',              help='data.yaml path')
     parser.add_argument('--hyp',  type=str, default='config/training/hyp.zerocost.yaml', help='hyperparameters path, i.e. data/hyp.scratch.yaml')
     parser.add_argument('--model',type=str, default='config/model/Search-YOLOv4-CSP.yaml',       help='model path')
@@ -298,85 +298,85 @@ def main():
                 model.load_state_dict(load_param)
                 params_list.append(analyze_model(load_param))
                 
-                ##################################################
-                # Calculate Zc Map And Zc Score
-                ##################################################
-                d_prob = model.module.softmax_sampling(detach=True) if is_ddp else model.softmax_sampling(detach=True)
+                # ##################################################
+                # # Calculate Zc Map And Zc Score
+                # ##################################################
+                # d_prob = model.module.softmax_sampling(detach=True) if is_ddp else model.softmax_sampling(detach=True)
                 
-                prob = model.module.softmax_sampling() if is_ddp else model.softmax_sampling()
-                architecture_info = {
-                    'arch_type': 'continuous',
-                    'arch': prob
-                }
-                zc_map_list =       dict([(zc_name, zc_function(d_prob, IMG_IDX)) for zc_name, zc_function in zc_function_list.items()])
-                zc_map_short_list = dict([(zc_name, zc_function(d_prob, IMG_IDX, True))  for zc_name, zc_function in zc_function_list.items()])
-                for zc_name, zc_map in zc_map_short_list.items(): print(f'{zc_name} {zc_map}')
+                # prob = model.module.softmax_sampling() if is_ddp else model.softmax_sampling()
+                # architecture_info = {
+                #     'arch_type': 'continuous',
+                #     'arch': prob
+                # }
+                # zc_map_list =       dict([(zc_name, zc_function(d_prob, IMG_IDX)) for zc_name, zc_function in zc_function_list.items()])
+                # zc_map_short_list = dict([(zc_name, zc_function(d_prob, IMG_IDX, True))  for zc_name, zc_function in zc_function_list.items()])
+                # for zc_name, zc_map in zc_map_short_list.items(): print(f'{zc_name} {zc_map}')
 
-                zc_scores = dict([(zc_name, model.calculate_zc(architecture_info, zc_map)) for zc_name, zc_map in zc_map_list.items()])
-                zc_loss_dict= dict([(zc_name, zc_score) for zc_name, zc_score in zc_scores.items()])
+                # zc_scores = dict([(zc_name, model.calculate_zc(architecture_info, zc_map)) for zc_name, zc_map in zc_map_list.items()])
+                # zc_loss_dict= dict([(zc_name, zc_score) for zc_name, zc_score in zc_scores.items()])
                 
-                ##################################################
-                # Calculate Zero-DNAS Gradient Norm
-                ##################################################
-                for key, zc_loss_value in reversed(zc_loss_dict.items()):
-                    print(f'{key} Norm ({key}={zc_loss_value})')
-                    gradient1 = torch.autograd.grad(zc_loss_value, model.get_optimizer_parameter(), retain_graph=True)
-                    norm_list, avg_norm = theta_grad_norm_v2(gradient1, p=P_NORM)
-                    if key not in norm_dict: norm_dict[key] = []
-                    norm_dict[key].append((norm_list, avg_norm))
-                ##################################################
-                # Plot Zc Value for different epoch
-                ##################################################                
-                for zc_name in zc_function_list.keys():
-                    zc_map = zc_map_short_list[zc_name]
-                    fig = analyze_map_func2([{'naswot_map': zc_map}], model_file, None)
-                    fig.tight_layout()
-                    fig.canvas.draw()
-                    data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-                    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-                    writers[zc_name].append_data(data)
-                    plt.close(fig)
+                # ##################################################
+                # # Calculate Zero-DNAS Gradient Norm
+                # ##################################################
+                # for key, zc_loss_value in reversed(zc_loss_dict.items()):
+                #     print(f'{key} Norm ({key}={zc_loss_value})')
+                #     gradient1 = torch.autograd.grad(zc_loss_value, model.get_optimizer_parameter(), retain_graph=True)
+                #     norm_list, avg_norm = theta_grad_norm_v2(gradient1, p=P_NORM)
+                #     if key not in norm_dict: norm_dict[key] = []
+                #     norm_dict[key].append((norm_list, avg_norm))
+                # ##################################################
+                # # Plot Zc Value for different epoch
+                # ##################################################                
+                # for zc_name in zc_function_list.keys():
+                #     zc_map = zc_map_short_list[zc_name]
+                #     fig = analyze_map_func2([{'naswot_map': zc_map}], model_file, None)
+                #     fig.tight_layout()
+                #     fig.canvas.draw()
+                #     data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+                #     data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+                #     writers[zc_name].append_data(data)
+                #     plt.close(fig)
                     
 
 
-        # Norm Plot
-        norm_fig, norm_axes = plt.subplots(1, 2)
-        print(len(norm_axes))
-        search_name = ['gamma', 'depth']
-        legend = []
+        # # Norm Plot
+        # norm_fig, norm_axes = plt.subplots(1, 2)
+        # print(len(norm_axes))
+        # search_name = ['gamma', 'depth']
+        # legend = []
 
-        # 创建两个空折线，一个在每个子图中
-        if True:
-            data = {
-                'naswot': {
-                    0: {'x':[],'y':[]},
-                    1: {'x':[],'y':[]},
-                },
-                'snip': {
-                    0: {'x':[],'y':[]},
-                    1: {'x':[],'y':[]},
-                }
-            }
+        # # 创建两个空折线，一个在每个子图中
+        # if True:
+        #     data = {
+        #         'naswot': {
+        #             0: {'x':[],'y':[]},
+        #             1: {'x':[],'y':[]},
+        #         },
+        #         'snip': {
+        #             0: {'x':[],'y':[]},
+        #             1: {'x':[],'y':[]},
+        #         }
+        #     }
 
-            for zc_name, search_norm_list in norm_dict.items():
-                legend.append(zc_name)
-                for epoch_idx, epoch_norm_list in enumerate(search_norm_list):
-                    epoch_idx *= 2
-                    for s_idx, stage_norm_list in enumerate(epoch_norm_list):
-                        data[zc_name][s_idx]['x'].append(epoch_idx)
-                        data[zc_name][s_idx]['y'].append(np.mean(stage_norm_list))
+        #     for zc_name, search_norm_list in norm_dict.items():
+        #         legend.append(zc_name)
+        #         for epoch_idx, epoch_norm_list in enumerate(search_norm_list):
+        #             epoch_idx *= 2
+        #             for s_idx, stage_norm_list in enumerate(epoch_norm_list):
+        #                 data[zc_name][s_idx]['x'].append(epoch_idx)
+        #                 data[zc_name][s_idx]['y'].append(np.mean(stage_norm_list))
             
-            for zc_name, search_norm_list in norm_dict.items():
-                for s_idx in range(2):
-                    norm_axes[s_idx].plot(data[zc_name][s_idx]['x'], data[zc_name][s_idx]['y'], label=zc_name)
+        #     for zc_name, search_norm_list in norm_dict.items():
+        #         for s_idx in range(2):
+        #             norm_axes[s_idx].plot(data[zc_name][s_idx]['x'], data[zc_name][s_idx]['y'], label=zc_name)
                     
-            for i in range(len(norm_axes)):
-                norm_axes[i].set_title(f"L{P_NORM} Norm {search_name[i]}")
-                norm_axes[i].set_xlabel("Epoch")
-                norm_axes[i].legend()
-            plt.tight_layout()
-            plt.savefig(os.path.join(stats_folder, f'norm_L{P_NORM}_analysis.jpg'), dpi=300)
-            plt.close(fig)
+        #     for i in range(len(norm_axes)):
+        #         norm_axes[i].set_title(f"L{P_NORM} Norm {search_name[i]}")
+        #         norm_axes[i].set_xlabel("Epoch")
+        #         norm_axes[i].legend()
+        #     plt.tight_layout()
+        #     plt.savefig(os.path.join(stats_folder, f'norm_L{P_NORM}_analysis.jpg'), dpi=300)
+        #     plt.close(fig)
         
         data = [
             {
@@ -406,17 +406,17 @@ def main():
         for stage_idx in range(8):
             row_idx = stage_idx // 2
             col_idx = stage_idx %  2
-            # norm_axes[row_idx, col_idx].plot(data[stage_idx]['mean']['x'], data[stage_idx]['mean']['y'], label='mean')
-            # norm_axes[row_idx, col_idx].plot(data[stage_idx]['var']['x'], data[stage_idx]['var']['y'], label='var')
-            norm_axes[row_idx, col_idx].plot(data[stage_idx]['var']['x'], data[stage_idx]['min']['y'], label='min')
-            norm_axes[row_idx, col_idx].plot(data[stage_idx]['var']['x'], data[stage_idx]['max']['y'], label='max')
+            norm_axes[row_idx, col_idx].plot(data[stage_idx]['mean']['x'], data[stage_idx]['mean']['y'], label='mean')
+            norm_axes[row_idx, col_idx].plot(data[stage_idx]['var']['x'], data[stage_idx]['var']['y'], label='var')
+            # norm_axes[row_idx, col_idx].plot(data[stage_idx]['var']['x'], data[stage_idx]['min']['y'], label='min')
+            # norm_axes[row_idx, col_idx].plot(data[stage_idx]['var']['x'], data[stage_idx]['max']['y'], label='max')
             
             norm_axes[row_idx, col_idx].set_title(f"Stage{stage_idx} Statistics")
             norm_axes[row_idx, col_idx].legend()
 
         plt.tight_layout()
         plt.savefig(os.path.join(stats_folder, 'param_analysis.jpg'), dpi=300)
-        plt.close(fig)
+        # plt.close(fig)
 
     except KeyboardInterrupt:
         pass

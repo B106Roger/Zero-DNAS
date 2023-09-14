@@ -82,117 +82,6 @@ def parse_config_args(exp_name):
     return args, converted_cfg
 
 
-def analyze(model, args):
-    model.eval()  
-    from lib.zero_proxy import naswot
-    PROXY_DICT = {
-        'naswot': naswot.calculate_zero_cost_map2,
-    }
-    if args.zc not in PROXY_DICT.keys():
-        raise Value(f"key {args.zc} is not registered in PROXY_DICT")
-    zc_func = PROXY_DICT[args.zc]
-    wot_function = lambda arch_prob, idx: PROXY_DICT[args.zc](model, arch_prob, img_pairs[idx], targets, None)
-    IMG_IDX = 1
-    
-    prob = model.softmax_sampling(detach=True)
-    wot_function(prob, IMG_IDX)
-    
-    model_list = ['model_init.pt', *[f'ema_pretrained_{epoch}.pt' for epoch in range(2,22,2)]]
-    exp_list   = natsorted(glob.glob(os.path.join('experiments','workspace','valid_exp',args.exps+'*')))
-    stats_folder = os.path.join('experiments','workspace','valid_exp',f"stats_{args.exps}")
-    
-    os.makedirs(stats_folder, exist_ok=True)
-    
-    
-    # model_list = model_list[4:]
-    print(os.path.join('experiments','workspace','valid_exp',args.exps))
-    print(model_list)
-    f = open(os.path.join(stats_folder, f'log_data{IMG_IDX}.txt'), 'w')
-    store_img = (img_pairs[IMG_IDX] * 255.0).int().permute(0,2,3,1).cpu().numpy()[...,::-1]
-    cv2.imwrite(os.path.join(stats_folder, f'pair{IMG_IDX}_0.jpg'), store_img[0])
-    cv2.imwrite(os.path.join(stats_folder, f'pair{IMG_IDX}_1.jpg'), store_img[1])
-    
-    f.write(f"{'model':28s} ")
-    for i in range(8):
-        f.write(f'stage{i:<5d} ')
-    f.write(f'{"overall":10s}\n')
-    
-    for model_file in model_list:
-        
-        zc_map_list = []
-        zc_map_rank_list = []
-        zc_map_correlation = []
-        for exp_path in exp_list:
-            model_path = os.path.join(exp_path, 'model_weights', model_file)
-            print(f'Loading {model_path}')
-            model.load_state_dict(torch.load(model_path))
-            
-            zc_map = wot_function(prob, IMG_IDX)
-            num_stages = len(zc_map)
-            
-            zc_map_array = np.array([
-                np.array([
-                    stage_map[key] for key in stage_map.keys()
-                ]) for stage_map in zc_map
-            ])
-            
-            zc_map_rank_array = np.argsort(zc_map_array, axis=1)
-        
-            zc_map_list.append(np.expand_dims(zc_map_array, axis=-1))
-            zc_map_rank_list.append(np.expand_dims(zc_map_rank_array, axis=-1))
-        
-        # (num_stages, num_choices, num_seed)
-        zc_map_list = np.concatenate(zc_map_list, axis=-1)
-        zc_map_rank_list = np.concatenate(zc_map_rank_list, axis=-1)
-        
-        zc_score_var = np.var(zc_map_list, axis=-1)
-        zc_rank_var  = np.var(zc_map_rank_list, axis=-1)
-        
-        zc_score_var = zc_score_var.mean(axis=-1)
-        zc_rank_var = zc_rank_var.mean(axis=-1)
-        
-        stats_list = {
-            'kendalls_tau':  stats.kendalltau, #kendalltau(x, y, initial_lexsort=True)
-            'spearmans_rho': stats.spearmanr , #spearmanr(a, b=None, axis=0, nan_policy='propagate', alternative='two-sided')
-        }
-        
-        for stage in range(len(zc_map_rank_list)):
-            stage_correlation = {}
-            num_choices = len(zc_map_rank_list[stage])
-            for stats_name, stats_func in stats_list.items():
-                num_seeds = len(zc_map_rank_list[stage][0])
-                comb_score_list = []
-                for (i,j) in combinations(list(range(num_seeds)), 2):
-                    rank1 = zc_map_rank_list[stage, ..., i]
-                    rank2 = zc_map_rank_list[stage, ..., j]
-                    
-                    coef, p_value = stats_func(rank1, rank2)
-                    comb_score_list.append(coef)
-                comb_score = np.mean(comb_score_list)
-                stage_correlation[stats_name] = comb_score
-            
-            zc_map_correlation.append(stage_correlation)
-                
-        f.write(f'{model_file:26s}\n')
-        f.write(f'{"score var":26s} ')
-        for stage_var in zc_score_var:
-            f.write(f'{stage_var:10.6f} ')
-        f.write(f'{zc_score_var.mean():10.6f}\n')
-        
-        for stats_name in stats_list.keys():
-            f.write(f'{stats_name:26s} ')
-            tmp_list = []
-            for stage_var in zc_map_correlation:
-                f.write(f'{stage_var[stats_name]:10.6f} ')
-                tmp_list.append(stage_var[stats_name])
-            f.write(f'{np.mean(tmp_list):10.6f}\n')
-            # print(tmp_list, np.mean(tmp_list))
-        
-        f.write('*'*100+'\n')
-        f.flush()
-
-
-
 def main():
     args, cfg = parse_config_args('super net training')
     
@@ -333,7 +222,119 @@ def main():
     ##################################################################
     ### Choice a Zero-Cost Method
     ##################################################################  
-    analyze(model, args)
+    model.eval()  
+    from lib.zero_proxy import naswot
+    PROXY_DICT = {
+        'naswot': naswot.calculate_zero_cost_map2,
+    }
+    if args.zc not in PROXY_DICT.keys():
+        raise Value(f"key {args.zc} is not registered in PROXY_DICT")
+    zc_func = PROXY_DICT[args.zc]
+    wot_function = lambda arch_prob, idx: PROXY_DICT[args.zc](model, arch_prob, img_pairs[idx], targets, None)
+    IMG_IDX = 1
+    
+    prob = model.softmax_sampling(detach=True)
+    wot_function(prob, IMG_IDX)
+    
+    try:
+        model_list = ['model_init.pt', *[f'ema_pretrained_{epoch}.pt' for epoch in range(2,22,2)]]
+        exp_list   = natsorted(glob.glob(os.path.join('experiments','workspace','valid_exp',args.exps+'*')))
+        stats_folder = os.path.join('experiments','workspace','valid_exp',f"stats_{args.exps}")
+        
+        os.makedirs(stats_folder, exist_ok=True)
+        
+        
+        # model_list = model_list[4:]
+        print(os.path.join('experiments','workspace','valid_exp',args.exps))
+        print(model_list)
+        f = open(os.path.join(stats_folder, f'log_data{IMG_IDX}.txt'), 'w')
+        store_img = (img_pairs[IMG_IDX] * 255.0).int().permute(0,2,3,1).cpu().numpy()[...,::-1]
+        cv2.imwrite(os.path.join(stats_folder, f'pair{IMG_IDX}_0.jpg'), store_img[0])
+        cv2.imwrite(os.path.join(stats_folder, f'pair{IMG_IDX}_1.jpg'), store_img[1])
+        
+        f.write(f"{'model':28s} ")
+        for i in range(8):
+            f.write(f'stage{i:<5d} ')
+        f.write(f'{"overall":10s}\n')
+        
+        for model_file in model_list:
+            
+            zc_map_list = []
+            zc_map_rank_list = []
+            zc_map_correlation = []
+            for exp_path in exp_list:
+                model_path = os.path.join(exp_path, 'model_weights', model_file)
+                print(f'Loading {model_path}')
+                model.load_state_dict(torch.load(model_path))
+                
+                zc_map = wot_function(prob, IMG_IDX)
+                num_stages = len(zc_map)
+                
+                zc_map_array = np.array([
+                    np.array([
+                        stage_map[key] for key in stage_map.keys()
+                    ]) for stage_map in zc_map
+                ])
+                
+                zc_map_rank_array = np.argsort(zc_map_array, axis=1)
+            
+                zc_map_list.append(np.expand_dims(zc_map_array, axis=-1))
+                zc_map_rank_list.append(np.expand_dims(zc_map_rank_array, axis=-1))
+            
+            # (num_stages, num_choices, num_seed)
+            zc_map_list = np.concatenate(zc_map_list, axis=-1)
+            zc_map_rank_list = np.concatenate(zc_map_rank_list, axis=-1)
+            
+            zc_score_var = np.var(zc_map_list, axis=-1)
+            zc_rank_var  = np.var(zc_map_rank_list, axis=-1)
+            
+            zc_score_var = zc_score_var.mean(axis=-1)
+            zc_rank_var = zc_rank_var.mean(axis=-1)
+            
+            stats_list = {
+                'kendalls_tau':  stats.kendalltau, #kendalltau(x, y, initial_lexsort=True)
+                'spearmans_rho': stats.spearmanr , #spearmanr(a, b=None, axis=0, nan_policy='propagate', alternative='two-sided')
+            }
+            
+            for stage in range(len(zc_map_rank_list)):
+                stage_correlation = {}
+                num_choices = len(zc_map_rank_list[stage])
+                for stats_name, stats_func in stats_list.items():
+                    num_seeds = len(zc_map_rank_list[stage][0])
+                    comb_score_list = []
+                    for (i,j) in combinations(list(range(num_seeds)), 2):
+                        rank1 = zc_map_rank_list[stage, ..., i]
+                        rank2 = zc_map_rank_list[stage, ..., j]
+                        
+                        coef, p_value = stats_func(rank1, rank2)
+                        comb_score_list.append(coef)
+                    comb_score = np.mean(comb_score_list)
+                    stage_correlation[stats_name] = comb_score
+                
+                zc_map_correlation.append(stage_correlation)
+                    
+
+            f.write(f'{model_file:26s}\n')
+            f.write(f'{"score var":26s} ')
+            for stage_var in zc_score_var:
+                f.write(f'{stage_var:10.6f} ')
+            f.write(f'{zc_score_var.mean():10.6f}\n')
+            
+            for stats_name in stats_list.keys():
+                f.write(f'{stats_name:26s} ')
+                tmp_list = []
+                for stage_var in zc_map_correlation:
+                    f.write(f'{stage_var[stats_name]:10.6f} ')
+                    tmp_list.append(stage_var[stats_name])
+                f.write(f'{np.mean(tmp_list):10.6f}\n')
+                # print(tmp_list, np.mean(tmp_list))
+            
+            f.write('*'*100+'\n')
+            f.flush()
+    except KeyboardInterrupt:
+        pass
+
+
 
 if __name__ == '__main__':
     main()

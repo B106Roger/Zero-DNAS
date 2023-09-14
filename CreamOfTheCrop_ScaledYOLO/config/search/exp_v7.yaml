@@ -1,6 +1,6 @@
 MODEL: 'Supernet_Training'
 SAVE_PATH: './experiments/workspace/train'
-SEED: 45 #44 #43 #42
+SEED: 42 #44 #43 #42
 LOCAL_RANK: -1
 
 ##############################################################################
@@ -34,8 +34,8 @@ THETA_OPTIMIZER:
 EPOCHS: 20 # 20 #120
 UPDATE_METHOD: 'ver1'
 TEMPERATURE: 
-  INIT: 1.0
-  FINAL: 1.0
+  INIT: 5.0
+  FINAL: 5.0
 
 # Phase 2 Searching Strategy
 STAGE2:

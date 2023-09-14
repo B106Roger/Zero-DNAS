@@ -1,6 +1,6 @@
 MODEL: 'Supernet_Training'
 SAVE_PATH: './experiments/workspace/train'
-SEED: 42 #44 #43 #42
+SEED: 44 #44 #43 #42
 LOCAL_RANK: -1
 
 ##############################################################################

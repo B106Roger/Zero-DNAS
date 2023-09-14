@@ -297,9 +297,10 @@ def stringify_theta(thetas, normalize=False, temperature=1.):
     list of archtiecture value
     """
     if normalize:
-        normalize_func = lambda x: torch.nn.functional.softmax(x / temperature).detach().cpu().numpy()
+        softmax_func = lambda x: torch.nn.functional.softmax(x / temperature).detach().cpu().numpy()
+        sigmoid_func = lambda x: torch.nn.functional.sigmoid(x / temperature).detach().cpu().numpy()
     else:
-        normalize_func = lambda x: x.detach().cpu().numpy()
+        softmax_func = sigmoid_func = lambda x: x.detach().cpu().numpy()
     
     
     write_arch = []
@@ -311,14 +312,19 @@ def stringify_theta(thetas, normalize=False, temperature=1.):
         else:
             for key, value in arch.items():
                 if key == 'block_name': pass
-                else:
-                    tmp_arch[key] = normalize_func(arch[key])
-                     
+                elif key == 'connection': 
+                    print('this case')
+                    tmp_arch[key] = sigmoid_func(arch[key])
+                else:                     tmp_arch[key] = softmax_func(arch[key])
+                    
         write_arch.append(tmp_arch)
     return write_arch
 
 
 def thetas_to_archtecture(thetas, model):
+    """
+    thetas: only accepct normalize thetas
+    """
     export_thetas = copy.deepcopy(thetas)
     theta_idx = 0
     for depth, m in enumerate(model.blocks):
@@ -340,6 +346,7 @@ def thetas_to_archtecture(thetas, model):
                     export_thetas[theta_idx][key] = search_space[key][best_option_idx]
             elif m.__class__ in [ELAN_Search, ELAN2_Search]:
                 search_space = m.search_space
+                print(f'thetas[{theta_idx}]={thetas[theta_idx]}')
                 for key in search_space.keys():
                     if key == 'connection':
                         con_len = len(search_space['connection'])

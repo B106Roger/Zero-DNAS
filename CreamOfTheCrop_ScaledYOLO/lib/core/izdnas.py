@@ -456,14 +456,16 @@ def train_epoch_zdnas(epoch, model, zc_func, theta_optimizer, cfg, device, task_
     alpha = 0.0 if epoch < cfg.STAGE2.HARDWARE_FREEZE_EPOCHS else alpha
     print(f'Gamma(ZC loss weight)={gamma:.3f} Alpha(FLOP loss weight)={alpha:.3f}')
     
-    num_iter = 2880
+    num_iter = 2000 # 2880
     if local_rank in [-1, 0]:
         logger.info(('%10s' * 8) % ('Epoch', 'gpu_num', 'Param', 'FLOPS', 'f_loss', 'zc_loss', 'total', 'temp'))
         pbar = tqdm(range(num_iter), total=num_iter, bar_format='{l_bar}{bar:5}{r_bar}')  # progress bar
     
     f=open(os.path.join(logdir, 'train.txt'), 'a')
     for iter_idx in pbar:
-        if iter_idx % 50 == 0: 
+        # if iter_idx % 50 == 0: 
+        if iter_idx % 250 == 0: 
+        
             arch_prob = model.module.softmax_sampling(temperature, detach=True) if is_ddp else model.softmax_sampling(temperature, detach=True)
             zc_map = zc_func(arch_prob)
             f.write(f'[{epoch}-{iter_idx:04d}] {str(arch_prob)}\n')

@@ -631,7 +631,8 @@ class ELAN(nn.Module):
         super(ELAN, self).__init__()
         c_ = (len(connection) + 2) * cn
         n  = max(connection) + 1 if len(connection) > 0 else 0
-
+        print(c1, c2, cn, connection)
+        
         self.cv1 = Conv(c1, cn, 1, 1)
         self.cv2 = Conv(c1, cn, 1, 1)
         self.m = nn.Sequential(*[Conv(cn, cn, 3, 1) for _ in range(n)])
@@ -662,6 +663,7 @@ class ELAN2(nn.Module):
         super(ELAN2, self).__init__()
         c_ = (len(connection) + 4) * cn
         n  = max(connection) + 1 if len(connection) > 0 else 0
+        print(c1, c2, cn, connection)
 
         self.cv1 = Conv(c1, cn*2, 1, 1)
         self.cv2 = Conv(c1, cn*2, 1, 1)

@@ -174,148 +174,148 @@ def calculate_wot(model, arch_prob, inputs, targets, opt=None):
 PREPROCESSED_BLOCK=False
 BATCH_SIZE=2
 REGISTER_LIST = []
-# Method 1 (My ZeroDNAS Version)
-# Calculate ZeroCost for output of Large Structure (CSP, CSP2, ELAN, ELAN2, Bottleneck, SPPCSP, Cov) 
-# cofnig上所列出的架構都會搜索
-def preprocess_block(model):
-    def forward_hook(module, inp, out):
-        if isinstance(out, tuple):
-            out = out[0]
-        out = out.view(out.size(0), -1)
-        out = out[:BATCH_SIZE]
-        x = (out > 0).float()
-        K1 = x @ x.t()
-        K2 = (1.-x) @ (1.-x.t())
-        model.K += K1.cpu().numpy() + K2.cpu().numpy()
-        # print('[Forward Hook]', type(module), model.K.flatten())
+# # Method 1 (My ZeroDNAS Version)
+# # Calculate ZeroCost for output of Large Structure (CSP, CSP2, ELAN, ELAN2, Bottleneck, SPPCSP, Cov) 
+# # cofnig上所列出的架構都會搜索
+# def preprocess_block(model):
+#     def forward_hook(module, inp, out):
+#         if isinstance(out, tuple):
+#             out = out[0]
+#         out = out.view(out.size(0), -1)
+#         out = out[:BATCH_SIZE]
+#         x = (out > 0).float()
+#         K1 = x @ x.t()
+#         K2 = (1.-x) @ (1.-x.t())
+#         model.K += K1.cpu().numpy() + K2.cpu().numpy()
+#         # print('[Forward Hook]', type(module), model.K.flatten())
         
-    def search_forward_hook(module, inp, out):
-        if isinstance(out, tuple):
-            out = out[0]
-        out = out.view(out.size(0), -1)
-        out = out[:BATCH_SIZE]
-        x = (out > 0).float()
-        K1 = x @ x.t()
-        K2 = (1.-x) @ (1.-x.t())
-        module.tmp_K = K1.cpu().numpy() + K2.cpu().numpy()
-        # print('[Forward Hook]',type(module), module.tmp_K.flatten() + model.K.flatten(), out.mean())
+#     def search_forward_hook(module, inp, out):
+#         if isinstance(out, tuple):
+#             out = out[0]
+#         out = out.view(out.size(0), -1)
+#         out = out[:BATCH_SIZE]
+#         x = (out > 0).float()
+#         K1 = x @ x.t()
+#         K2 = (1.-x) @ (1.-x.t())
+#         module.tmp_K = K1.cpu().numpy() + K2.cpu().numpy()
+#         # print('[Forward Hook]',type(module), module.tmp_K.flatten() + model.K.flatten(), out.mean())
 
-    block_num = len(model.blocks)
-    block_id  = 0
-    first_hook = True
-    white_list = [BottleneckCSP_Search, BottleneckCSP2_Search, Conv, Bottleneck, SPPCSP, ELAN_Search,ELAN2_Search]
-    white_list += [BottleneckCSP,        BottleneckCSP2,        ELAN,        ELAN2]
-    for module_idx, (name, module) in enumerate(model.named_modules()):
-        if name == f'blocks.{block_id}':
-            if module.__class__ in white_list:
-                print('register hook', name, str(type(module)))
-                module.visited_backwards = False
-                if 'Search' in module.__class__.__name__:
-                    module.register_forward_hook(search_forward_hook)
-                else:
-                    module.register_forward_hook(forward_hook)
+#     block_num = len(model.blocks)
+#     block_id  = 0
+#     first_hook = True
+#     white_list = [BottleneckCSP_Search, BottleneckCSP2_Search, Conv, Bottleneck, SPPCSP, ELAN_Search,ELAN2_Search]
+#     white_list += [BottleneckCSP,        BottleneckCSP2,        ELAN,        ELAN2]
+#     for module_idx, (name, module) in enumerate(model.named_modules()):
+#         if name == f'blocks.{block_id}':
+#             if module.__class__ in white_list:
+#                 print('register hook', name, str(type(module)))
+#                 module.visited_backwards = False
+#                 if 'Search' in module.__class__.__name__:
+#                     module.register_forward_hook(search_forward_hook)
+#                 else:
+#                     module.register_forward_hook(forward_hook)
                     
-            block_id += 1
+#             block_id += 1
 
-def calculate_zero_cost_map(model, arch_prob, inputs, targets=None, short_name=None):
-    global PREPROCESSED_BLOCK, REGISTER_LIST
-    # if not PREPROCESSED_BLOCK: 
-    #     preprocess_block(model)
-    #     PREPROCESSED_BLOCK = True
-    if model not in REGISTER_LIST:
-        preprocess_block(model)
-        REGISTER_LIST.append(model)
+# def calculate_zero_cost_map(model, arch_prob, inputs, targets=None, short_name=None):
+#     global PREPROCESSED_BLOCK, REGISTER_LIST
+#     # if not PREPROCESSED_BLOCK: 
+#     #     preprocess_block(model)
+#     #     PREPROCESSED_BLOCK = True
+#     if model not in REGISTER_LIST:
+#         preprocess_block(model)
+#         REGISTER_LIST.append(model)
     
-    model.eval()
-    model.K = 0.0
-    zc_maps = []
-    """
-    x: input image. torch.float32(b, c, h, w)
-    distributions: architecture distributions parameter. torch.float32()
-    """
-    distributions = arch_prob
+#     model.eval()
+#     model.K = 0.0
+#     zc_maps = []
+#     """
+#     x: input image. torch.float32(b, c, h, w)
+#     distributions: architecture distributions parameter. torch.float32()
+#     """
+#     distributions = arch_prob
     
-    stage_idx = 0
-    x = inputs
-    y, dt = [], []  # outputs
-    for idx, m in enumerate(model.blocks):
-        if m.f != -1:  # if not from previous layer
-            x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
+#     stage_idx = 0
+#     x = inputs
+#     y, dt = [], []  # outputs
+#     for idx, m in enumerate(model.blocks):
+#         if m.f != -1:  # if not from previous layer
+#             x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
 
-        if   m.__class__ in [BottleneckCSP_Search, BottleneckCSP2_Search]:
-            stage_args = distributions[stage_idx]
-            #####################################################
-            zc_map = {}
-            options, search_keys = m.generate_options()
-            for option in options:
-                block_args = {}
-                query_keys = []
-                for key_idx, key in enumerate(search_keys):
-                    option_index = option[key_idx]
-                    option_value = m.search_space[key][option_index]
+#         if   m.__class__ in [BottleneckCSP_Search, BottleneckCSP2_Search]:
+#             stage_args = distributions[stage_idx]
+#             #####################################################
+#             zc_map = {}
+#             options, search_keys = m.generate_options()
+#             for option in options:
+#                 block_args = {}
+#                 query_keys = []
+#                 for key_idx, key in enumerate(search_keys):
+#                     option_index = option[key_idx]
+#                     option_value = m.search_space[key][option_index]
                     
-                    # Block Args for search block
-                    block_args[key] = torch.zeros((len(m.search_space[key]),))
-                    block_args[key][option_index] = 1.0
+#                     # Block Args for search block
+#                     block_args[key] = torch.zeros((len(m.search_space[key]),))
+#                     block_args[key][option_index] = 1.0
                     
-                    if short_name == True:
-                        query_keys.append(f'{key[0]}{option_value}')
-                    elif short_name is None:
-                        query_keys.append(f'{key}{option_value}')
-                query_key      = '-'.join(query_keys)
+#                     if short_name == True:
+#                         query_keys.append(f'{key[0]}{option_value}')
+#                     elif short_name is None:
+#                         query_keys.append(f'{key}{option_value}')
+#                 query_key      = '-'.join(query_keys)
                 
-                # Calculate Each Zero-Cost FLOPS
-                _ = m(x, args=block_args)
-                s, ld = np.linalg.slogdet(m.tmp_K)
-                # Note that the negative symbol is to make the wot score larger in negative side
-                zc_map[query_key] = -ld
-            #####################################################
+#                 # Calculate Each Zero-Cost FLOPS
+#                 _ = m(x, args=block_args)
+#                 s, ld = np.linalg.slogdet(m.tmp_K)
+#                 # Note that the negative symbol is to make the wot score larger in negative side
+#                 zc_map[query_key] = -ld
+#             #####################################################
             
-            zc_maps.append(zc_map)
-            x = m(x, args=stage_args)
-            model.K += m.tmp_K
-            stage_idx+=1
-        elif m.__class__ in [ELAN_Search, ELAN2_Search]:
-            stage_args = distributions[stage_idx]
-            #####################################################
-            zc_map = {}
-            options, search_keys = m.generate_options()
+#             zc_maps.append(zc_map)
+#             x = m(x, args=stage_args)
+#             model.K += m.tmp_K
+#             stage_idx+=1
+#         elif m.__class__ in [ELAN_Search, ELAN2_Search]:
+#             stage_args = distributions[stage_idx]
+#             #####################################################
+#             zc_map = {}
+#             options, search_keys = m.generate_options()
             
-            comb_list       = m._connection_combination(m.search_space['connection'])
-            comb_list_index = m._connection_combination(m.search_space['connection'], index=True)
-            for option in options:
-                block_args = {}
-                query_keys = []
+#             comb_list       = m._connection_combination(m.search_space['connection'])
+#             comb_list_index = m._connection_combination(m.search_space['connection'], index=True)
+#             for option in options:
+#                 block_args = {}
+#                 query_keys = []
                 
-                args_cn             = int(m.search_space['gamma'     ][option[search_keys.index('gamma')]] * m.base_cn)
-                args_connection     = comb_list[option[search_keys.index('connection')]]
-                args_connection_idx = comb_list_index[option[search_keys.index('connection')]]
+#                 args_cn             = int(m.search_space['gamma'     ][option[search_keys.index('gamma')]] * m.base_cn)
+#                 args_connection     = comb_list[option[search_keys.index('connection')]]
+#                 args_connection_idx = comb_list_index[option[search_keys.index('connection')]]
                 
-                block_args['connection'] = torch.zeros((len(m.search_space['connection']),))
-                block_args['connection'][args_connection_idx] = 1.0
-                # for connection_idx in args_connection_idx:
-                #     block_args['connection'][connection_idx] = 1.
+#                 block_args['connection'] = torch.zeros((len(m.search_space['connection']),))
+#                 block_args['connection'][args_connection_idx] = 1.0
+#                 # for connection_idx in args_connection_idx:
+#                 #     block_args['connection'][connection_idx] = 1.
                 
-                block_args['gamma'] = torch.zeros((len(m.search_space['gamma']),))
-                block_args['gamma'][option[search_keys.index('gamma')]] = 1.0
+#                 block_args['gamma'] = torch.zeros((len(m.search_space['gamma']),))
+#                 block_args['gamma'][option[search_keys.index('gamma')]] = 1.0
 
-                query_key = f'cn{args_cn}-con{str(args_connection)}'
-                # Calculate Each Zero-Cost FLOPS
-                _ = m(x, args=block_args)
-                s, ld = np.linalg.slogdet(m.tmp_K)
-                # Note that the negative symbol is to make the wot score larger in negative side
-                zc_map[query_key] = -ld
-            #####################################################
+#                 query_key = f'cn{args_cn}-con{str(args_connection)}'
+#                 # Calculate Each Zero-Cost FLOPS
+#                 _ = m(x, args=block_args)
+#                 s, ld = np.linalg.slogdet(m.tmp_K)
+#                 # Note that the negative symbol is to make the wot score larger in negative side
+#                 zc_map[query_key] = -ld
+#             #####################################################
             
-            zc_maps.append(zc_map)
-            x = m(x, args=stage_args)
-            model.K += m.tmp_K
-            stage_idx+=1
-        else:
-            x = m(x)  # run
+#             zc_maps.append(zc_map)
+#             x = m(x, args=stage_args)
+#             model.K += m.tmp_K
+#             stage_idx+=1
+#         else:
+#             x = m(x)  # run
                     
-        y.append(x if m.i in model.save else None)  # save output
-    return zc_maps
+#         y.append(x if m.i in model.save else None)  # save output
+#     return zc_maps
 
 
 # Method 0 (Original NASWOT & Egor ZeroDNAS should be this one)
@@ -429,7 +429,6 @@ def calculate_zero_cost_map2(model, arch_prob, inputs, targets=None, short_name=
             model.wot += m.wot
             stage_idx+=1
         elif m.__class__ in [ELAN_Search, ELAN2_Search]:
-            m.wot = 0.0
             stage_args = distributions[stage_idx]
             #####################################################
             zc_map = {}
@@ -438,6 +437,7 @@ def calculate_zero_cost_map2(model, arch_prob, inputs, targets=None, short_name=
             comb_list       = m._connection_combination(m.search_space['connection'])
             comb_list_index = m._connection_combination(m.search_space['connection'], index=True)
             for option in options:
+                m.wot = 0.0
                 block_args = {}
                 query_keys = []
                 
