@@ -313,7 +313,6 @@ def stringify_theta(thetas, normalize=False, temperature=1.):
             for key, value in arch.items():
                 if key == 'block_name': pass
                 elif key == 'connection': 
-                    print('this case')
                     tmp_arch[key] = sigmoid_func(arch[key])
                 else:                     tmp_arch[key] = softmax_func(arch[key])
                     

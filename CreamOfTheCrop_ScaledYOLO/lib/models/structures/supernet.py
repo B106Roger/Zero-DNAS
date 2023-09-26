@@ -77,6 +77,7 @@ class SuperNet(nn.Module):
             init_temp=3):
         super(SuperNet, self).__init__()
         block_args = model_args['backbone'] + model_args['head']
+        self.searchable_block_idx = self.identify_searchable(block_args)
         self.num_classes = num_classes
         self.num_features = num_features
         # self.drop_rate = drop_rate
@@ -151,6 +152,13 @@ class SuperNet(nn.Module):
     def update_main(self):
         self.thetas = self.thetas_main
 
+    def identify_searchable(self, block_args):
+        searchable_block_id = []
+        for block_id, block_arg in enumerate(block_args):
+            if 'Search' in block_arg[2]:
+                searchable_block_id.append(block_id) 
+        return searchable_block_id
+    
     def initialize_biased_thetas(self, block_args):
         thetas = nn.ModuleList()
         for i in range(len(block_args) - len(self.ignore_stages)):

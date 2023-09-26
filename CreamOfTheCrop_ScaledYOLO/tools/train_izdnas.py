@@ -262,7 +262,7 @@ def main():
     # start_epoch = resume_epoch if resume_epoch is not None else 0
     # if start_epoch > 0:
     #     lr_scheduler.step(start_epoch)
-
+    print('cfg.WARMUP_EPOCH', cfg.WARMUP_EPOCH)
     if args.local_rank == 0:
         logger.info('Scheduled epochs: %d', num_epochs)
 
@@ -345,7 +345,6 @@ def main():
         
     # training scheme
     method = 'ver1'
-    temp_decay = (cfg.STAGE2.TEMPERATURE.FINAL/cfg.STAGE2.TEMPERATURE.INIT)**(1/cfg.STAGE2.EPOCHS) # 0.9560
     is_ddp = is_parallel(model)
     ##################################################################
     ### Choice a Zero-Cost Method
@@ -364,6 +363,7 @@ def main():
     try:
         print('TASK_FLOPS', TASK_FLOPS)
         print('EPOCH', num_epochs)
+        temp_decay1 = (cfg.TEMPERATURE.FINAL/cfg.TEMPERATURE.INIT)**(1/(cfg.EPOCHS+cfg.CONVERGE_EPOCH)) # 0.9560
 
         ###########################################
         # Phase1 Pretrained Model Weights
@@ -468,10 +468,16 @@ def main():
                 )
                 random_testing('end of testing')
                 print()
+                
+                if epoch >= cfg.WARMUP_EPOCH:
+                    bef_temp = model.temperature
+                    aft_temp = model.temperature * temp_decay1
+                    model.temperature = aft_temp #* np.exp(-0.065)
+                    print(f'Decreasing temperature. End Of Epoch{epoch}  {bef_temp:.4f}=>{aft_temp:.4f}')
+                
+                
             s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
             logger.info(s)
-            # filename = os.path.join(model_dir, f'phase1_best_f{TASK_FLOPS}.yaml')
-            # export_thetas(model.softmax_sampling(detach=True), model, model.model_args, filename)
         else:
             model.load_state_dict(torch.load(args.pre_weights))
 
@@ -479,6 +485,8 @@ def main():
         ###########################################
         # Phase2 Train Zero-DNAS 
         ###########################################
+        temp_decay2 = (cfg.STAGE2.TEMPERATURE.FINAL/cfg.STAGE2.TEMPERATURE.INIT)**(1/cfg.STAGE2.EPOCHS) # 0.9560
+        model.temperature  = cfg.STAGE2.TEMPERATURE.INIT
         arch_prob = model.module.softmax_sampling() if is_ddp else model.softmax_sampling()
         arch_raw  = model.module.thetas_main if is_ddp else model.thetas_main
         with open(os.path.join(output_dir, 'thetas.txt'), 'a') as f:
@@ -497,9 +505,9 @@ def main():
             ##############################################################
             print('Decreasing temperature!')
             if is_parallel(model):
-                model.module.temperature = model.module.temperature * temp_decay #* np.exp(-0.065)
+                model.module.temperature = model.module.temperature * temp_decay2 #* np.exp(-0.065)
             else:
-                model.temperature = model.temperature * temp_decay #* np.exp(-0.065)
+                model.temperature = model.temperature * temp_decay2 #* np.exp(-0.065)
             
             ##############################################################
             # 

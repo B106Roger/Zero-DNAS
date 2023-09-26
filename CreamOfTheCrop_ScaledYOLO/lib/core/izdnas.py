@@ -256,6 +256,7 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
     training_losses_m = AverageMeter()
     flops_losses_m = AverageMeter()
     det_losses_m = AverageMeter()
+    model_w_dir      = os.path.join(logdir, 'model_weights')
     
     cache_hits = 0
     iterations = len(dataloader)
@@ -283,8 +284,6 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
     
     
     for iter_idx, (imgs, targets, paths, _) in pbar:
-
-        # t_data = time.time() - t_data 
         ##################################################################
         ### 1st. Train SuperNet Parameter
         ##################################################################
@@ -427,6 +426,11 @@ def train_epoch_dnas(model, dataloader, optimizer, cfg, device, task_flops, task
             
             model.train()
             ema.ema.train()
+
+        # If iteration is too large, store checkpoint every 2500 iteration
+        if iterations > 5000:
+            if iter_idx % 2500 == 0:
+                torch.save(ema.ema.state_dict(),   os.path.join(model_w_dir, f'ema_pretrained_{epoch}_{iter_idx}.pt'))
 
     torch.cuda.synchronize()
 

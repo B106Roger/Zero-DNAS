@@ -15,7 +15,7 @@ import tqdm
 import shutil
 import scipy.stats as stats
 # import _init_paths
-import sys
+import sys, json, copy
 sys.path.insert(0, 'lib')
 
 # import timm packages
@@ -45,116 +45,208 @@ import random
 import glob
 from natsort import natsorted
 from itertools import combinations
+import imageio
+import matplotlib.pyplot as plt
 
 
-def analyze(model, args):
-    model.eval()  
-    from lib.zero_proxy import naswot
-    PROXY_DICT = {
-        'naswot': naswot.calculate_zero_cost_map2,
-    }
-    if args.zc not in PROXY_DICT.keys():
-        raise Value(f"key {args.zc} is not registered in PROXY_DICT")
-    zc_func = PROXY_DICT[args.zc]
-    wot_function = lambda arch_prob, idx: PROXY_DICT[args.zc](model, arch_prob, img_pairs[idx], targets, None)
-    IMG_IDX = 1
-    
+def analyze_ranking(model, zero_cost_func, image_idx):
+    """
+    analyze the model ranking in stage.
+    """
     prob = model.softmax_sampling(detach=True)
-    wot_function(prob, IMG_IDX)
     
-    model_list = ['model_init.pt', *[f'ema_pretrained_{epoch}.pt' for epoch in range(2,22,2)]]
-    exp_list   = natsorted(glob.glob(os.path.join('experiments','workspace','valid_exp',args.exps+'*')))
-    stats_folder = os.path.join('experiments','workspace','valid_exp',f"stats_{args.exps}")
+    zc_map = zero_cost_func(prob, image_idx)
+    num_stages = len(zc_map)
+    
+    # (num_stage, num_candidate)
+    score_array = np.array([
+        np.array([
+            stage_map[key] for key in stage_map.keys()
+        ]) for stage_map in zc_map
+    ])
+    
+    # (num_stage, num_candidate, 1)
+    rank_array  = np.expand_dims(np.argsort(score_array, axis=1), axis=-1)
+    score_array = np.expand_dims(score_array, axis=-1)
+    
+    # Corresponding to the number of stage
+    results = {
+        'rank':  rank_array,
+        'score': score_array
+    }
+    return results
+
+
+
+def analyze_ranking_epoch_info(model, args, zero_cost_func):
+    IMAGE_IDX = 0
+    NUM_STAGES = len(model.searchable_block_idx)
+    epoch_model_list = ['model_init.pt', *[f'ema_pretrained_{epoch}.pt' for epoch in range(2,22,2)]]    
+    epoch_model_list = epoch_model_list[:10]
+    
+    exp_list      = natsorted(glob.glob(os.path.join('experiments','workspace','valid_exp',args.exp_series+'*')))
+    # exp_list      = exp_list[:2]
+    
+    exp_name_list = [exp_name.split('/')[-1] for exp_name in exp_list]
+    stats_folder  = os.path.join('experiments','workspace','statistics',args.exp_series)
     
     os.makedirs(stats_folder, exist_ok=True)
+    for exp_name in exp_name_list:
+        os.makedirs(os.path.join(stats_folder, exp_name), exist_ok=True)
+    # writers = dict([(zc_name, imageio.get_writer(os.path.join(stats_folder,f'{zc_name}.mp4'), fps=4)) for zc_name in zc_function_list.keys()])
+    
+    print('[Roger] Statistics save path: ',      stats_folder)
+    print('[Roger] List of model checkpoints: ', epoch_model_list)
+    
+    # store_img = (img_list[IMG_IDX] * 255.0).int().permute(0,2,3,1).cpu().numpy()[...,::-1]
+    # cv2.imwrite(os.path.join(stats_folder, f'pair{IMG_IDX}_0.jpg'), store_img[0])
+    # cv2.imwrite(os.path.join(stats_folder, f'pair{IMG_IDX}_1.jpg'), store_img[1])
     
     
-    # model_list = model_list[4:]
-    print(os.path.join('experiments','workspace','valid_exp',args.exps))
-    print(model_list)
-    f = open(os.path.join(stats_folder, f'log_data{IMG_IDX}.txt'), 'w')
-    store_img = (img_pairs[IMG_IDX] * 255.0).int().permute(0,2,3,1).cpu().numpy()[...,::-1]
-    cv2.imwrite(os.path.join(stats_folder, f'pair{IMG_IDX}_0.jpg'), store_img[0])
-    cv2.imwrite(os.path.join(stats_folder, f'pair{IMG_IDX}_1.jpg'), store_img[1])
+    ####################################################
+    # Prepare Data To Be Plot
+    ####################################################
     
-    f.write(f"{'model':28s} ")
-    for i in range(8):
-        f.write(f'stage{i:<5d} ')
-    f.write(f'{"overall":10s}\n')
+    # Overall Result
+    data = {
+        'tau': {'x': [], 'y': []},
+        'var': {'x': [], 'y': []}
+    }
+    # Stage-Wise Result
+    data2 = [
+        {
+            'tau': {'x': [], 'y': []},
+            'var': {'x': [], 'y': []}
+        } for i in range(NUM_STAGES)
+    ]
     
-    for model_file in model_list:
-        
-        zc_map_list = []
-        zc_map_rank_list = []
-        zc_map_correlation = []
-        for exp_path in exp_list:
+    score_stats = [
+        {
+            'rank':  [],
+            'score': [],
+            'epoch': []
+        }
+        for j in range(len(exp_list))
+    ]
+    
+    searchable_block_name = [f'blocks.{block_id}' for block_id in model.searchable_block_idx ]
+    print('searchable_block_name', searchable_block_name)
+
+    for epoch_idx, model_file in enumerate(epoch_model_list):                       # For each epoch
+        epoch = epoch_idx * 2 
+        for model_idx, (exp_path, exp_name) in enumerate(zip(exp_list, exp_name_list)): # For different rand seed model
             model_path = os.path.join(exp_path, 'model_weights', model_file)
             print(f'Loading {model_path}')
             model.load_state_dict(torch.load(model_path))
             
-            zc_map = wot_function(prob, IMG_IDX)
-            num_stages = len(zc_map)
+            ###############################################
+            # Replaciable  Area
+            # Analyze Parameter
+            ###############################################
+            stage_statistics = analyze_ranking(model, zero_cost_func, IMAGE_IDX)
+            ###############################################
             
-            zc_map_array = np.array([
-                np.array([
-                    stage_map[key] for key in stage_map.keys()
-                ]) for stage_map in zc_map
-            ])
-            
-            zc_map_rank_array = np.argsort(zc_map_array, axis=1)
+            for key in stage_statistics.keys():
+                score_stats[model_idx][key].append(stage_statistics[key])
+            score_stats[model_idx]['epoch'].append(epoch)
         
-            zc_map_list.append(np.expand_dims(zc_map_array, axis=-1))
-            zc_map_rank_list.append(np.expand_dims(zc_map_rank_array, axis=-1))
-        
-        # (num_stages, num_choices, num_seed)
-        zc_map_list = np.concatenate(zc_map_list, axis=-1)
-        zc_map_rank_list = np.concatenate(zc_map_rank_list, axis=-1)
-        
-        zc_score_var = np.var(zc_map_list, axis=-1)
-        zc_rank_var  = np.var(zc_map_rank_list, axis=-1)
-        
-        zc_score_var = zc_score_var.mean(axis=-1)
-        zc_rank_var = zc_rank_var.mean(axis=-1)
-        
-        stats_list = {
-            'kendalls_tau':  stats.kendalltau, #kendalltau(x, y, initial_lexsort=True)
-            'spearmans_rho': stats.spearmanr , #spearmanr(a, b=None, axis=0, nan_policy='propagate', alternative='two-sided')
-        }
-        
-        for stage in range(len(zc_map_rank_list)):
-            stage_correlation = {}
-            num_choices = len(zc_map_rank_list[stage])
-            for stats_name, stats_func in stats_list.items():
-                num_seeds = len(zc_map_rank_list[stage][0])
-                comb_score_list = []
-                for (i,j) in combinations(list(range(num_seeds)), 2):
-                    rank1 = zc_map_rank_list[stage, ..., i]
-                    rank2 = zc_map_rank_list[stage, ..., j]
+        # (num_stage, num_candidate, num_exp)
+        rank_array  = np.concatenate([score_stats[m_idx]['rank'][epoch_idx]  for m_idx in range(len(exp_name_list))], axis=-1)
+        score_array = np.concatenate([score_stats[m_idx]['score'][epoch_idx] for m_idx in range(len(exp_name_list))], axis=-1)
+
+        num_exp = len(exp_name_list)
+        stage_tau_list = []
+        for stage_idx in range(NUM_STAGES):
+            comb_tau_list = [] # length=>(8,)
+            # Computation for Kendal's tau
+            for (i,j) in combinations(list(range(num_exp)), 2):
+                rank1 = rank_array[stage_idx, ..., i]
+                rank2 = rank_array[stage_idx, ..., j]
                     
-                    coef, p_value = stats_func(rank1, rank2)
-                    comb_score_list.append(coef)
-                comb_score = np.mean(comb_score_list)
-                stage_correlation[stats_name] = comb_score
+                coef, p_value = stats.kendalltau(rank1, rank2)
+                comb_tau_list.append(coef)
             
-            zc_map_correlation.append(stage_correlation)
-                
-        f.write(f'{model_file:26s}\n')
-        f.write(f'{"score var":26s} ')
-        for stage_var in zc_score_var:
-            f.write(f'{stage_var:10.6f} ')
-        f.write(f'{zc_score_var.mean():10.6f}\n')
+            stage_tau = np.mean(comb_tau_list)
+            stage_tau_list.append(stage_tau)
         
-        for stats_name in stats_list.keys():
-            f.write(f'{stats_name:26s} ')
-            tmp_list = []
-            for stage_var in zc_map_correlation:
-                f.write(f'{stage_var[stats_name]:10.6f} ')
-                tmp_list.append(stage_var[stats_name])
-            f.write(f'{np.mean(tmp_list):10.6f}\n')
-            # print(tmp_list, np.mean(tmp_list))
+            data2[stage_idx]['tau']['y'].append(stage_tau)
+            data2[stage_idx]['tau']['x'].append(epoch)
+            
+            data2[stage_idx]['var']['y'].append(np.mean(np.var(score_array[stage_idx], axis=-1), axis=-1).item())
+            data2[stage_idx]['var']['x'].append(epoch)
+
+        data['tau']['y'].append(np.mean(data2[stage_idx]['tau']['y']))
+        data['tau']['x'].append(epoch)
+        data['var']['y'].append(np.mean(data2[stage_idx]['var']['y']))
+        data['var']['x'].append(epoch)
+
+
+    
+    ###############################################
+    # Plotting Kendal tau for each stage
+    ###############################################
+    fig, axes = plt.subplots(4, 2, figsize=(16,20))
+    for stage_idx in range(NUM_STAGES):
+        ###################
+        # Draw Figure
+        ###################
+        row_idx = stage_idx // 2
+        col_idx = stage_idx %  2
         
-        f.write('*'*100+'\n')
-        f.flush()
+        color = 'tab:red'
+        axes[row_idx,  col_idx].plot(data2[stage_idx]['tau']['x'], data2[stage_idx]['tau']['y'], label=f'tau', color = color)
+        axes[row_idx,  col_idx].set_xlabel('Epoch')
+        axes[row_idx,  col_idx].set_ylabel('Kendals Tau', color = color)
+        axes[row_idx,  col_idx].tick_params(axis='y', labelcolor=color)
+        
+        color = 'tab:blue'
+        axes2 = axes[row_idx,  col_idx].twinx() 
+        axes2.plot(data2[stage_idx]['var']['x'], data2[stage_idx]['var']['y'], label=f'var', color = color)
+        axes2.set_ylabel('Zero Cost Score', color = color)
+        axes2.tick_params(axis='y', labelcolor=color)
+        axes[row_idx, col_idx].set_title(f"Stage{stage_idx} Statistics")
+        
+        line1, label1 = axes[row_idx, col_idx].get_legend_handles_labels()
+        line2, label2 = axes2.get_legend_handles_labels()
+        axes[row_idx, col_idx].legend(line1+line2, label1+label2, loc='center right')
+        
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(stats_folder, f'ranking_analyze_stage.jpg'), dpi=300)
+    plt.close(fig)
+
+    with open(os.path.join(stats_folder, f'ranking_analyze_stage.json'), 'w') as f:
+        json.dump(data2, f)
+
+    ##############################################
+    # Plotting Kendal tau for model
+    ##############################################    
+    fig, axes = plt.subplots(1, 1, figsize=(8,10))
+    axes2 = axes.twinx()
+
+    color = 'tab:red'
+    axes.plot(data['tau']['x'], data['tau']['y'], label='tau', color = color)
+    axes.set_ylabel('Kendals Tau', color = color)
+    axes.tick_params(axis='y', labelcolor=color)
+    
+    color = 'tab:blue'   
+    axes2.plot(data['var']['x'],  data['var']['y'],   label='var', color = color)
+    axes2.set_ylabel('Zero Cost Score', color = color)
+    axes2.tick_params(axis='y', labelcolor=color)
+    
+    axes.set_xlabel('Epoch')
+    axes.set_title(f"Model Statistics")
+    line1, label1 = axes.get_legend_handles_labels()
+    line2, label2 = axes2.get_legend_handles_labels()
+    axes.legend(line1+line2, label1+label2, loc='center right')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(stats_folder, f'ranking_analyze_overall.jpg'), dpi=300)
+    plt.close(fig)
+    
+    with open(os.path.join(stats_folder, f'ranking_analyze_overall.json'), 'w') as f:
+        json.dump(data, f)
+
 
 def parse_config_args(exp_name):
     parser = argparse.ArgumentParser(description=exp_name)
@@ -165,8 +257,8 @@ def parse_config_args(exp_name):
     parser.add_argument('--data', type=str, default='config/dataset/voc_dnas.yaml',              help='data.yaml path')
     parser.add_argument('--hyp',  type=str, default='config/training/hyp.zerocost.yaml', help='hyperparameters path, i.e. data/hyp.scratch.yaml')
     parser.add_argument('--model',type=str, default='config/model/Search-YOLOv4-CSP.yaml',       help='model path')
-    parser.add_argument('--exps', type=str, default='exp', help="name of experiments")
-    parser.add_argument('--nas',  type=str, help='NAS-Search-Space and hardware constraint combination')
+    parser.add_argument('--exp_series', type=str, default='exp_series', help="name of experiments")
+    # parser.add_argument('--nas',  type=str, help='NAS-Search-Space and hardware constraint combination')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--zc', type=str, default='naswot', help='zero cost metrics')
     
@@ -201,6 +293,9 @@ def main():
         model_args   = yaml.load(f, Loader=yaml.FullLoader)
     search_space = model_args['search_space']
 
+    # task_name = args.nas if args.nas != '' else 'DNAS-25'
+    # TASK_FLOPS      = task_dict[task_name]['GFLOPS']     # e.g TASK_FLOPS  = 5  means 50 GFLOPs
+    # TASK_PARAMS     = task_dict[task_name]['PARAMS']     # e.g TASK_PARAMS = 32 means 32 million parameters.
     SEARCH_SPACES   = model_args['search_space']
     USE_AMP         = False
     FLOP_RESOLUTION = (None, 3, cfg.search_resolution, cfg.search_resolution)
@@ -293,22 +388,34 @@ def main():
 
     model = model.to(device)
 
-    dataloader_weight, dataset_weight = create_dataloader(train_weight_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
+    # dataloader_weight, dataset_weight = create_dataloader(train_weight_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
+    #                                         cache=args.cache_images, rect=args.rect,
+    #                                         world_size=args.world_size)
+    
+    # dataloader_thetas, dataset_thetas = create_dataloader(train_thetas_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
+    #                                         cache=args.cache_images, rect=args.rect,
+    #                                         world_size=args.world_size)
+    
+    dataloader_weight, dataset_weight = create_dataloader(train_thetas_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
                                             cache=args.cache_images, rect=args.rect,
                                             world_size=args.world_size)
-    
     dataloader_thetas, dataset_thetas = create_dataloader(train_thetas_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
                                             cache=args.cache_images, rect=args.rect,
                                             world_size=args.world_size)
     
     img_pairs = []
+    target_pairs = []
     for iter_idx, (uimgs, targets, paths, _) in enumerate(dataloader_weight):
         # imgs = (batch=2, 3, height, width)
         imgs     = uimgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
         targets  = targets.to(device)
         
-        imgs=imgs[:2]
+        imgs=imgs
+        targets=targets
+        
         img_pairs.append(imgs)
+        target_pairs.append(targets)
+        
         if iter_idx == 10: break
 
     mlc = np.concatenate(dataset_weight.labels, 0)[:, 0].max()  # max label class
@@ -328,7 +435,22 @@ def main():
     ##################################################################
     ### Choice a Zero-Cost Method
     ##################################################################  
-    analyze(model, args)
-
+    model.eval() 
+    prob = model.softmax_sampling(detach=True)
+    
+    from lib.zero_proxy import naswot, snip
+    PROXY_DICT = {
+        'naswot': naswot.calculate_zero_cost_map2,
+        'snip':   snip.calculate_zero_cost_map,    
+    }
+    zc_function_list = {
+        'naswot':  lambda arch_prob, idx, short_name=None: PROXY_DICT['naswot'](model, arch_prob, img_pairs[idx][:2], target_pairs[idx][:2], short_name=short_name),
+        'snip':    lambda arch_prob, idx, short_name=None: PROXY_DICT['snip'](model, arch_prob, img_pairs[idx], target_pairs[idx], short_name=short_name),
+    }
+    if args.zc not in PROXY_DICT.keys():
+        raise Value(f"key {args.zc} is not registered in PROXY_DICT")
+    
+    analyze_ranking_epoch_info(model, args, zc_function_list[args.zc])
+    
 if __name__ == '__main__':
     main()

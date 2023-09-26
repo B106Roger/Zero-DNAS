@@ -9,7 +9,7 @@ from torch.nn import ReLU, LeakyReLU, SiLU
 
 from lib.utils.synflow import synflow, sum_arr
 from lib.models.blocks.yolo_blocks import Conv, Bottleneck, DEFAULT_ACTIVATION, V4_DEFAULT_ACTIVATION, V7_DEFAULT_ACTIVATION
-
+# import math
 
 TYPE = None # ZeroDNAS_Egor or DNAS or ZeroCost
 SHOW_FEATURE_STATS = False
@@ -76,6 +76,9 @@ def init_value(temperature, value_count, init_type, total_step=0.3):
         res = tmp_log - tmp_log.mean()
         
         return torch.nn.Parameter(torch.tensor(res))
+
+def inv_sigmoid(prob, temperature):
+    return -np.log((1.0-prob)/prob) * temperature
 
 class GeneralOpeartor_Search(nn.Module):
     def __init__(self):
@@ -573,7 +576,8 @@ class ELAN_Search(GeneralOpeartor_Search):
             length    = len(candidates)
             if key == 'connection':
                 init_val = torch.zeros((length, ))
-                init_val[-1] = 1.5
+                init_val[-1] = inv_sigmoid(0.818, temperature)
+                print('[Roger] init_val', init_val)
                 arch[key] = torch.nn.Parameter(init_val).to(device)
             else:
                 arch[key] = init_value(temperature, length, init_type=init_type).to(device)
@@ -682,7 +686,7 @@ class ELAN2_Search(GeneralOpeartor_Search):
             length    = len(candidates)
             if key == 'connection':
                 init_val = torch.zeros((length, ))
-                init_val[-1] = 1.5
+                init_val[-1] = inv_sigmoid(0.818, temperature)
                 arch[key] = torch.nn.Parameter(init_val).to(device)
             else:
                 arch[key] = init_value(temperature, length, init_type=init_type).to(device)

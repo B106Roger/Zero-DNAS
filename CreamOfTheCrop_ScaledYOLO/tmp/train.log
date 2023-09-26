@@ -1,0 +1,5 @@
+09/25 05:21:33 PM | args.data with nc=80 override the config/search/exp_v4.yaml cfg.DATASET.NUM_CLASSES=20
+09/25 05:21:33 PM | args.data with nc=80 override the config/model/Search-YOLOv4-CSP.yaml args.model['nc']=20
+09/25 05:21:33 PM | Training on Process 0 with 1 GPUs.
+09/25 05:21:36 PM | Supernet created, param count: 131.20 M
+09/25 05:21:36 PM | resolution: 416

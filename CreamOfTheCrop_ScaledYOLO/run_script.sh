@@ -2,3 +2,15 @@ python tools/train.py --cfg experiments/configs/train/train.yaml --data voc.yaml
 
 python ./tools/train_zdnas.py --cfg config/search/train_zdnas.yaml --data ./config/dataset/voc_dnas.yaml --hyp ./config/training/hyp.zerocost.yaml --model config/model/Search-YOLOv4-CSP.yaml --device 6 --exp_name EXP_NAME --nas DNAS-50 --zc naswot
 python ./tools/train_izdnas.py --cfg config/search/train_izdnas.yaml --data ./config/dataset/voc_dnas.yaml --hyp ./config/training/hyp.zerocost.yaml --model config/model/Search-YOLOv4-CSP.yaml --device 6 --exp_name EXP_NAME --nas DNAS-50 --zc naswot
+
+
+python ./tools/train_izdnas.py --cfg ./config/search/train_izdnas-dy-t.yaml --data ./config/dataset/voc_dnas.yaml --hyp ./config/training/hyp.zerocost.yaml --model ./config/model/Search-YOLOv4-CSP.yaml --device 7 --exp_name 0921-v4-dy_temp-S42 --nas DNAS-50 --zc naswot --pre_weights experiments/workspace/valid_exp/0919-v4-dy_temp-S42/model_weights/ema_pretrained_10.pt
+python ./tools/train_izdnas.py --cfg ./config/search/train_izdnas-dy-t.yaml --data ./config/dataset/voc_dnas.yaml --hyp ./config/training/hyp.zerocost.yaml --model ./config/model/Search-YOLOv4-CSP.yaml --device 6 --exp_name 0921-v4-dy_temp-S43 --nas DNAS-50 --zc naswot --pre_weights experiments/workspace/valid_exp/0919-v4-dy_temp-S43/model_weights/ema_pretrained_10.pt
+python ./tools/train_izdnas.py --cfg ./config/search/train_izdnas-dy-t.yaml --data ./config/dataset/voc_dnas.yaml --hyp ./config/training/hyp.zerocost.yaml --model ./config/model/Search-YOLOv4-CSP.yaml --device 5 --exp_name 0921-v4-dy_temp-S44 --nas DNAS-50 --zc naswot --pre_weights experiments/workspace/valid_exp/0919-v4-dy_temp-S44/model_weights/ema_pretrained_10.pt
+python ./tools/train_izdnas.py --cfg ./config/search/train_izdnas-dy-t.yaml --data ./config/dataset/voc_dnas.yaml --hyp ./config/training/hyp.zerocost.yaml --model ./config/model/Search-YOLOv4-CSP.yaml --device 4 --exp_name 0921-v4-dy_temp-S45 --nas DNAS-50 --zc naswot --pre_weights experiments/workspace/valid_exp/0919-v4-dy_temp-S45/model_weights/ema_pretrained_10.pt
+
+
+python ./tools/train_izdnas.py --cfg ./config/search/train_izdnas-v7-t3.yaml --data ./config/dataset/voc_dnas.yaml --hyp ./config/training/hyp.zerocost.yaml --model ./config/model/Search-YOLOv7.yaml --device 4 --exp_name 0923_v7_init2_t3-S42 --nas DNAS-104 --zc naswot
+python ./tools/train_izdnas.py --cfg ./config/search/train_izdnas-v7-t3.yaml --data ./config/dataset/voc_dnas.yaml --hyp ./config/training/hyp.zerocost.yaml --model ./config/model/Search-YOLOv7.yaml --device 5 --exp_name 0923_v7_init2_t3-S43 --nas DNAS-104 --zc naswot
+python ./tools/train_izdnas.py --cfg ./config/search/train_izdnas-v7-t3.yaml --data ./config/dataset/voc_dnas.yaml --hyp ./config/training/hyp.zerocost.yaml --model ./config/model/Search-YOLOv7.yaml --device 6 --exp_name 0923_v7_init2_t3-S44 --nas DNAS-104 --zc naswot
+python ./tools/train_izdnas.py --cfg ./config/search/train_izdnas-v7-t3.yaml --data ./config/dataset/voc_dnas.yaml --hyp ./config/training/hyp.zerocost.yaml --model ./config/model/Search-YOLOv7.yaml --device 7 --exp_name 0923_v7_init2_t3-S45 --nas DNAS-104 --zc naswot

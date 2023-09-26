@@ -34,13 +34,13 @@ THETA_OPTIMIZER:
 EPOCHS: 20 # 20 #120
 UPDATE_METHOD: 'ver1'
 TEMPERATURE: 
-  INIT: 5.0
-  FINAL: 5.0
+  INIT: 1.0
+  FINAL: 1.0
 
 # Phase 2 Searching Strategy
 STAGE2:
   EPOCHS: 40 # 20 #120
   HARDWARE_FREEZE_EPOCHS: 10
   TEMPERATURE:
-    INIT: 5.0 #4.0  # 1.5  # 2.5  # 5.0
-    FINAL: 0.1 #0.01 # 0.01 # 0.05 # 0.1
+    INIT: 1.0 #4.0  # 1.5  # 2.5  # 5.0
+    FINAL: 0.02 #0.01 # 0.01 # 0.05 # 0.1

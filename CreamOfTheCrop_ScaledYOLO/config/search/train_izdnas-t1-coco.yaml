@@ -7,7 +7,7 @@ LOCAL_RANK: -1
 # Extra Option For Experiment
 DATASET:
   NUM_CLASSES: 20 #[Roger]1000
-  IMAGE_SIZE: 640 # image patch size
+  IMAGE_SIZE: 416 # image patch size
   INTERPOLATION: 'bilinear' # Image resize interpolation type
   BATCH_SIZE: 8 # #[Roger]2 batch size
 SEARCH_RESOLUTION: 416 # calculate the flops of each block
@@ -31,11 +31,11 @@ THETA_OPTIMIZER:
 
 
 # Phase 1 Pre-Training Strategy
-EPOCHS: 20 # 20 #120
+EPOCHS: 5 # 20 #120
 UPDATE_METHOD: 'ver1'
 TEMPERATURE: 
-  INIT: 5.0
-  FINAL: 5.0
+  INIT: 1.0
+  FINAL: 1.0
 
 # Phase 2 Searching Strategy
 STAGE2:
