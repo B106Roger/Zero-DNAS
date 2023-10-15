@@ -342,6 +342,7 @@ def preprocess_block2(model):
             x = (out > 0).float()
             K1 = x @ x.t()
             K2 = (1.-x) @ (1.-x.t())
+            # print(K1.cpu().numpy().flatten(), K2.cpu().numpy().flatten())
             parent_module.wot += K1.cpu().numpy() + K2.cpu().numpy()
             # print(f'[Search Hook] Parent Module: {str(type(parent_module)):20s} | Current Module:{str(type(module)):20s}', parent_module.wot.flatten())
         return search_forward_hook
@@ -420,6 +421,7 @@ def calculate_zero_cost_map2(model, arch_prob, inputs, targets=None, short_name=
                 # Calculate Each Zero-Cost FLOPS
                 _ = m(x, args=block_args)
                 s, ld = np.linalg.slogdet(m.wot)
+                # print(m.__class__.__name__, str(block_args), m.wot.flatten(), ld)
                 # Note that the negative symbol is to make the wot score larger in negative side
                 zc_map[query_key] = -ld
             #####################################################

@@ -14,6 +14,9 @@ from lib.utils.synflow import synflow, sum_arr
 
 # A callable object that could return a activation instance
 DEFAULT_ACTIVATION    = Mish # Default Model => Conv
+DEFAULT_NORMALIZATION = lambda in_chs: nn.BatchNorm2d(in_chs)
+# DEFAULT_NORMALIZATION = lambda in_chs: nn.GroupNorm(1, in_chs)
+
 V4_DEFAULT_ACTIVATION = Mish # BottleneckCSP BottleneckCSP2,
 V7_DEFAULT_ACTIVATION = SiLU # RepConv, ELAN, ELAN2
 
@@ -60,20 +63,16 @@ def DWConv(c1, c2, k=1, s=1, act=True):
 
 class Conv(nn.Module):
     # Standard convolution
-    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True, bn=True):  # ch_in, ch_out, kernel, stride, padding, groups
         super(Conv, self).__init__()
-        self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
-        # self.bn = nn.Identity()
-        # self.act = nn.Identity()
-        # if TYPE=='ZeroDNAS_Egor' or TYPE=='ZeroCost':
-        if False:
-            self.bn = nn.GroupNorm(1, c2)
-            self.act = DEFAULT_ACTIVATION() if act else nn.Identity()
-        elif TYPE=='DNAS':
-            self.bn = nn.BatchNorm2d(c2)
-            self.act = DEFAULT_ACTIVATION() if act else nn.Identity()
+        self.act = DEFAULT_ACTIVATION() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
+        self.bn  = DEFAULT_NORMALIZATION(c2) if bn is True else (bn if isinstance(bn, nn.Module) else nn.Identity())
+        
+        if isinstance(bn, nn.BatchNorm2d) or isinstance(bn, nn.GroupNorm):
+            with_bias = False
         else:
-            raise ValueError(f'Invalid Type: {TYPE}')
+            with_bias = True
+        self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=with_bias)
         self.block_name = f'cn_k{k}_s{s}'
 
 
@@ -152,7 +151,7 @@ class BottleneckCSP(nn.Module):
         self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
         self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
         self.cv4 = Conv(2 * c_, c2, 1, 1)
-        self.bn = nn.BatchNorm2d(2 * c_)  # applied to cat(cv2, cv3)
+        self.bn = DEFAULT_NORMALIZATION(2 * c_)  # applied to cat(cv2, cv3)
         self.act = V4_DEFAULT_ACTIVATION()
         self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
         self.block_name = f'bottlecsp_num{n}_gamma{e}'
@@ -244,7 +243,7 @@ class BottleneckCSP2(nn.Module):
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
         self.cv3 = Conv(2 * c_, c2, 1, 1)
-        self.bn = nn.BatchNorm2d(2 * c_) 
+        self.bn = DEFAULT_NORMALIZATION(2 * c_) 
         self.act = V4_DEFAULT_ACTIVATION()
         self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
         self.block_name = f'bottlecsp2_num{n}_gamma{e}'
@@ -328,14 +327,8 @@ class SPPCSP(nn.Module):
         self.m = nn.ModuleList([nn.MaxPool2d(kernel_size=x, stride=1, padding=x // 2) for x in k])
         self.cv5 = Conv(4 * c_, c_, 1, 1)
         self.cv6 = Conv(c_, c_, 3, 1)
-        if TYPE=='ZeroDNAS_Egor' or TYPE=='ZeroCost':
-            self.bn = nn.GroupNorm(1, 2 * c_) 
-            self.act = V4_DEFAULT_ACTIVATION()
-        elif TYPE=='DNAS':
-            self.bn = nn.BatchNorm2d(2 * c_) 
-            self.act = V4_DEFAULT_ACTIVATION()
-        else:
-            raise ValueError(f'Invalid Type: {TYPE}')
+        self.bn = DEFAULT_NORMALIZATION(2 * c_) 
+        self.act = V4_DEFAULT_ACTIVATION()
 
         self.cv7 = Conv(2 * c_, c2, 1, 1)
         self.block_name = f'sppcsp'
@@ -627,16 +620,18 @@ class CrossConv(nn.Module):
 
 class ELAN(nn.Module):
     # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
-    def __init__(self, c1, c2, cn, connection):  # ch_in, ch_out, number, shortcut, groups, expansion
+    def __init__(self, c1, c2, cn, connection, act=True):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(ELAN, self).__init__()
+        act = DEFAULT_ACTIVATION() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
+        
         c_ = (len(connection) + 2) * cn
         n  = max(connection) + 1 if len(connection) > 0 else 0
         print(c1, c2, cn, connection)
         
-        self.cv1 = Conv(c1, cn, 1, 1)
-        self.cv2 = Conv(c1, cn, 1, 1)
-        self.m = nn.Sequential(*[Conv(cn, cn, 3, 1) for _ in range(n)])
-        self.cv3 = Conv(c_, c2, 1, 1)
+        self.cv1 = Conv(c1, cn, 1, 1, act=act)
+        self.cv2 = Conv(c1, cn, 1, 1, act=act)
+        self.m = nn.Sequential(*[Conv(cn, cn, 3, 1, act=act) for _ in range(n)])
+        self.cv3 = Conv(c_, c2, 1, 1, act=act)
 
         self.connection = copy.copy(connection)
         self.n = n
@@ -659,16 +654,18 @@ class ELAN(nn.Module):
 
 class ELAN2(nn.Module):
     # CSP https://github.com/WongKinYiu/CrossStagePartialNetworks
-    def __init__(self, c1, c2, cn, connection):  # ch_in, ch_out, number, shortcut, groups, expansion
+    def __init__(self, c1, c2, cn, connection, act=True):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(ELAN2, self).__init__()
+        act = DEFAULT_ACTIVATION() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
+
         c_ = (len(connection) + 4) * cn
         n  = max(connection) + 1 if len(connection) > 0 else 0
         print(c1, c2, cn, connection)
 
-        self.cv1 = Conv(c1, cn*2, 1, 1)
-        self.cv2 = Conv(c1, cn*2, 1, 1)
-        self.m = nn.Sequential(*[Conv(cn, cn, 3, 1) if _ != 0 else Conv(cn*2, cn, 3, 1)for _ in range(n)])
-        self.cv3 = Conv(c_, c2, 1, 1)
+        self.cv1 = Conv(c1, cn*2, 1, 1, act=act)
+        self.cv2 = Conv(c1, cn*2, 1, 1, act=act)
+        self.m = nn.Sequential(*[Conv(cn, cn, 3, 1, act=act) if _ != 0 else Conv(cn*2, cn, 3, 1, act=act)for _ in range(n)])
+        self.cv3 = Conv(c_, c2, 1, 1, act=act)
 
         self.connection = copy.copy(connection)
         self.n = n
@@ -688,6 +685,13 @@ class ELAN2(nn.Module):
         
         return self.cv3(torch.cat(feat_list, dim=1))
     
+class SP(nn.Module):
+    def __init__(self, k=3, s=1):
+        super(SP, self).__init__()
+        self.m = nn.MaxPool2d(kernel_size=k, stride=s, padding=k // 2)
+
+    def forward(self, x):
+        return self.m(x)
     
 #############################################################
 # YOLOR

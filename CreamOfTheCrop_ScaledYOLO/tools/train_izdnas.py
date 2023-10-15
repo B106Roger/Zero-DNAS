@@ -72,7 +72,6 @@ def parse_config_args(exp_name):
     parser.add_argument('--model',type=str, default='config/model/Search-YOLOv4-CSP.yaml', help='model path')
     parser.add_argument('--exp_name', type=str, default='exp', help="name of experiments")
     parser.add_argument('--nas', default='', type=str, help='NAS-Search-Space and hardware constraint combination')
-    parser.add_argument('--pretrain_dir',  default='', type=str, help='pretrain model state dict')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--pre_weights', type=str, default='', help='pretrained model weights')
     parser.add_argument('--zc', type=str, default='', help='zero cost metrics')
@@ -100,6 +99,12 @@ def parse_config_args(exp_name):
     return args, converted_cfg
 
 task_dict = {
+    'DNAS-8':     { 'GFLOPS': 8,  'PARAMS': None, },
+    'DNAS-10':     { 'GFLOPS': 10.5,  'PARAMS': None, },
+    'DNAS-12':     { 'GFLOPS': 12.5,  'PARAMS': None, },
+    # 'DNAS-13':     { 'GFLOPS': 13,  'PARAMS': None, },
+    
+    
     'DNAS-25':     { 'GFLOPS': 25,  'PARAMS': None, },
     'DNAS-35':     { 'GFLOPS': 35,  'PARAMS': None, },
     'DNAS-45':     { 'GFLOPS': 45,  'PARAMS': None, },
@@ -113,6 +118,8 @@ task_dict = {
     'DNAS-80':     { 'GFLOPS': 80,  'PARAMS': None, },
     
     'DNAS-70':     { 'GFLOPS': 70,  'PARAMS': None, },
+    'DNAS-69':     { 'GFLOPS': 69,  'PARAMS': None, },
+    
     'DNAS-60':     { 'GFLOPS': 60,  'PARAMS': None, },
     'DNAS-50':     { 'GFLOPS': 50,  'PARAMS': None, },
     'DNAS-40':     { 'GFLOPS': 40,  'PARAMS': None, },
@@ -265,6 +272,8 @@ def main():
     print('cfg.WARMUP_EPOCH', cfg.WARMUP_EPOCH)
     if args.local_rank == 0:
         logger.info('Scheduled epochs: %d', num_epochs)
+        logger.info('Training Seed: %d', cfg.SEED)
+        
 
     dataloader_weight, dataset_weight = create_dataloader(train_weight_path, imgsz, cfg.DATASET.BATCH_SIZE, gs, args, hyp=hyp, augment=True,
                                             cache=args.cache_images, rect=args.rect,
@@ -315,34 +324,8 @@ def main():
     MODEL_WEIGHT_NAME = os.path.join(args.pretrain_dir, f'model_{cfg.FREEZE_EPOCH}.pt') 
     EMA_WEIGHT_NAME   = os.path.join(args.pretrain_dir, f'ema_pretrained_{cfg.FREEZE_EPOCH}.pt') 
     OPTIMIZER_NAME    = os.path.join(args.pretrain_dir, f'optimizer_{cfg.FREEZE_EPOCH}.pt')
-    if args.pretrain_dir != '':
-        start_epoch = 40
-        
-        # Load Supernet MOdel
-        model.load_state_dict(torch.load(MODEL_WEIGHT_NAME), strict=False)
-        
-        # Load EMA Model
-        if os.path.exists(EMA_WEIGHT_NAME):
-            ema.ema.load_state_dict(torch.load(EMA_WEIGHT_NAME))
-        else:
-            ema = ModelEMA(model) if args.local_rank in [-1, 0] else None
-        ema.updates      = 40 * len(dataloader_weight)
-        ema.updates_arch = 40 * len(dataloader_thetas)
-        
-        # Load Model Weights Optimizer Parameter
-        if os.path.exists(OPTIMIZER_NAME):
-            optimizer.load_state_dict(torch.load(OPTIMIZER_NAME))
-        
-        # Restore Learning Rate
-        lr_scheduler.step(start_epoch)
-        
-        # Calculate mAP of pretrain weights
-        _, _, map50, *other = test(
-            data=args.data, batch_size=16, imgsz=416, save_json=False,
-            model=ema.ema.module if hasattr(ema.ema, 'module') else ema.ema,
-            single_cls=False, dataloader=testloader, save_dir=output_dir, logger=logger
-        )
-        
+
+    
     # training scheme
     method = 'ver1'
     is_ddp = is_parallel(model)
@@ -478,6 +461,7 @@ def main():
                 
             s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
             logger.info(s)
+            model.load_state_dict(ema.ema.state_dict())
         else:
             model.load_state_dict(torch.load(args.pre_weights))
 

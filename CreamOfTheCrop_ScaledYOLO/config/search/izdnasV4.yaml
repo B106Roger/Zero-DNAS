@@ -1,6 +1,6 @@
 MODEL: 'Supernet_Training'
 SAVE_PATH: './experiments/workspace/train'
-SEED: 45 #44 #43 #42
+SEED: 42 #44 #43 #42
 LOCAL_RANK: -1
 
 ##############################################################################
@@ -40,7 +40,12 @@ TEMPERATURE:
 # Phase 2 Searching Strategy
 STAGE2:
   EPOCHS: 40 # 20 #120
+  ITERATIONS: 2880
+  ZCMAP_UPDATE_ITER: 50
   HARDWARE_FREEZE_EPOCHS: 10
+  ALPHA: 0.005
+  GAMMA: 0.03
+
   TEMPERATURE:
     INIT: 3.0 #4.0  # 1.5  # 2.5  # 5.0
     FINAL: 0.06616 #0.01 # 0.01 # 0.05 # 0.1

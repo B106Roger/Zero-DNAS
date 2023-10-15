@@ -17,11 +17,13 @@ def one_plot():
     ###############################
     # Input Area
     ###############################
-    label_list = ['t5','t3','t1']
+    # label_list = ['t5','t3','t1']
+    label_list = ['t3']
+    
     data_list = [
-        '0818_izdnas-every_act3',
+        # '0818_izdnas-every_act3',
         '0821_izdnas-t3-every_act3',
-        '0823_izdnas-t1-every_act3'
+        # '0823_izdnas-t1-every_act3'
     ]
     # label_list = ['t5','t1']
     # data_list = [
@@ -40,32 +42,32 @@ def one_plot():
     # fig, axes = plt.subplots(1, 1, figsize=(8,10))
     fig, axes = plt.subplots(1, 1, figsize=(4,5))
 
-    # axes2 = axes.twinx()
+    axes2 = axes.twinx() #
     for filename, f_label in zip(filename_list, label_list):
         with open(filename, 'r') as f:
             data = json.load(f)
 
         axes.plot( data['tau']['x'], data['tau']['y'], label=f'tau-{f_label}')
-        # axes2.plot(data['var']['x'], data['var']['y'], label=f'var-{f_label}', linestyle='--')
+        axes2.plot(data['var']['x'], data['var']['y'], label=f'var-{f_label}', linestyle='--') #
 
     step = int((data['tau']['x'][-1] - data['tau']['x'][0]) / (len(data['tau']['x'])-1))
-    # color = 'tab:red'
-    color = 'black'
+    color = 'tab:red' #
+    # color = 'black'
     
     axes.set_ylabel('Kendals Tau', color = color)
     axes.tick_params(axis='y', labelcolor=color)
     axes.set_xticks(np.arange(data['tau']['x'][0], data['tau']['x'][-1]+step, step))
     
-    # color = 'tab:blue'   
-    # axes2.set_ylabel('Zero Cost Score', color = color)
-    # axes2.tick_params(axis='y', labelcolor=color)
+    color = 'tab:blue'   #
+    axes2.set_ylabel('Zero Cost Score', color = color) #
+    axes2.tick_params(axis='y', labelcolor=color) #
 
     axes.set_xlabel('Epoch')
     axes.set_title(f"Model Statistics")
     axes.legend(loc='center right')
-    # line1, label1 = axes.get_legend_handles_labels()
-    # line2, label2 = axes2.get_legend_handles_labels()
-    # axes.legend(line1+line2, label1+label2, loc='center right')
+    line1, label1 = axes.get_legend_handles_labels()#
+    line2, label2 = axes2.get_legend_handles_labels()#
+    axes.legend(line1+line2, label1+label2, loc='center right')#
 
     plt.tight_layout()
     plt.savefig(f'ranking_analyze_overall_V2.jpg', dpi=300)
@@ -176,7 +178,7 @@ def multi_plot_param():
                 # color = 'tab:red'
                 color = 'black'
                 
-                axes1.set_ylabel('Kendals Tau', color = color)
+                axes1.set_ylabel('Variance', color = color)
                 axes1.tick_params(axis='y', labelcolor=color)
                 
                 # color = 'tab:blue'   
@@ -199,6 +201,6 @@ def multi_plot_param():
     plt.close(fig)
 
 if __name__ == '__main__':
-    # one_plot()
+    one_plot()
     # multi_plot()
-    multi_plot_param()
+    # multi_plot_param()

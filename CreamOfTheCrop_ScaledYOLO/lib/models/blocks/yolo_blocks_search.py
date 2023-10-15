@@ -8,7 +8,7 @@ from mish_cuda import MishCuda as Mish
 from torch.nn import ReLU, LeakyReLU, SiLU
 
 from lib.utils.synflow import synflow, sum_arr
-from lib.models.blocks.yolo_blocks import Conv, Bottleneck, DEFAULT_ACTIVATION, V4_DEFAULT_ACTIVATION, V7_DEFAULT_ACTIVATION
+from lib.models.blocks.yolo_blocks import Conv, Bottleneck, DEFAULT_ACTIVATION, V4_DEFAULT_ACTIVATION, V7_DEFAULT_ACTIVATION, DEFAULT_NORMALIZATION
 # import math
 
 TYPE = None # ZeroDNAS_Egor or DNAS or ZeroCost
@@ -146,15 +146,7 @@ class BottleneckCSP_Search(GeneralOpeartor_Search):
         self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
         self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
         self.cv4 = Conv(2 * c_, c2, 1, 1)
-        # if TYPE=='ZeroDNAS_Egor' or TYPE=='ZeroCost':
-        #     self.bn = nn.GroupNorm(1, 2 * c_)  # applied to cat(cv2, cv3)
-        #     self.act = nn.ReLU()
-        # elif TYPE=='DNAS':
-        #     self.bn = nn.BatchNorm2d(2 * c_)  # applied to cat(cv2, cv3)
-        #     self.act = Mish()
-        # else:
-        #     raise ValueError(f'Invalid Type: {TYPE}')
-        self.bn  = NORMALIZATION[bn](2 * c_)
+        self.bn  = DEFAULT_NORMALIZATION(2 * c_)
         self.act = ACTIVATION[act]()
         
         self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
@@ -304,7 +296,7 @@ class BottleneckCSP2_Search(GeneralOpeartor_Search):
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
         self.cv3 = Conv(2 * c_, c2, 1, 1)
-        self.bn  = NORMALIZATION[bn](2 * c_)
+        self.bn  = DEFAULT_NORMALIZATION(2 * c_)
         self.act = ACTIVATION[act]()
         self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
         self.block_name = f'{self.__class__.__name__}_n{n}g{e}'

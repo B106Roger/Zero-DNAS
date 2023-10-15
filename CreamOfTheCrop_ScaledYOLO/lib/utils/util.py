@@ -262,7 +262,10 @@ def cross_entropy_loss_with_soft_target(pred, soft_target):
 
 
 def create_supernet_scheduler(cfg, optimizer):
-    lf = lambda x: (((1 + math.cos(x * math.pi / cfg.EPOCHS)) / 2) ** 1.0) * 0.8 + 0.2  # cosine
+    if cfg.EPOCHS == 0:
+        lf = lambda x: x
+    else:
+        lf = lambda x: (((1 + math.cos(x * math.pi / cfg.EPOCHS)) / 2) ** 1.0) * 0.8 + 0.2  # cosine
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
     # ITERS = cfg.EPOCHS * \
     #     (1280000 / (cfg.NUM_GPU * cfg.DATASET.BATCH_SIZE))
